@@ -559,13 +559,17 @@ function parseNaturalPermissionCopyRequest(content) {
     const text = normaliseNaturalRequest(content);
     const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:apply|copy|use|set)\s+(?:the\s+)?same\s+permissions?\s+as\s+(?:the\s+)?(.+?)(?:\s+category)?\s+(?:to|onto|on|for)\s+(?:the\s+)?(.+?)\s+category(?:\s+and\s+(?:its\s+)?channels?)?(?:\s+please)?[.!]?$/i);
     if (!match) return null;
-    return { sourceCategoryName: match[1].trim().replace(/^other\s+/i, ''), targetCategoryName: match[2].trim() };
+    const sourceName = match[1].trim().replace(/^other\s+/i, '');
+    return {
+        sourceCategoryName: /^(?:the\s+)?standard\s+category\s+template$/i.test(sourceName) ? 'standard' : sourceName,
+        targetCategoryName: match[2].trim()
+    };
 }
 
 function findPermissionTemplateCategory(guild, name) {
     const exact = findCategory(guild, name);
     if (exact) return exact;
-    if (/gaming/i.test(name)) return findGamingPermissionTemplateCategory(guild);
+    if (/gaming|standard/i.test(name)) return findGamingPermissionTemplateCategory(guild);
     return null;
 }
 
@@ -992,7 +996,8 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
         try {
             const result = await applyPermissionTemplate(target, source);
             const skippedNote = result.skipped ? ` Skipped ${result.skipped} overwrite${result.skipped === 1 ? '' : 's'} the bot cannot manage.` : '';
-            await message.reply(`✅ Applied the permissions from **${source.name}** to **${target.name}** and its ${result.childChannelCount} child channel${result.childChannelCount === 1 ? '' : 's'}.${skippedNote}`);
+            const templateLabel = permissionCopy.sourceCategoryName === 'standard' ? 'the standard category template' : `**${source.name}**`;
+            await message.reply(`✅ Applied ${templateLabel} to **${target.name}** and its ${result.childChannelCount} child channel${result.childChannelCount === 1 ? '' : 's'}.${skippedNote}`);
         } catch (error) {
             console.error('Natural copy permissions error:', error);
             await message.reply("❌ I couldn't apply those permissions. Check my permissions and role hierarchy.");
