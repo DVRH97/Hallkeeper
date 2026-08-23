@@ -609,9 +609,12 @@ function getPermissionOverwrites(source, target) {
             skipped++;
             return [];
         }
+        if (isBotRole) {
+            return [{ id: botMember.id, type: 1, allow: overwrite.allow, deny: overwrite.deny }];
+        }
         return [{ id: targetRole.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }];
     });
-    if (botMember && !overwrites.some(overwrite => overwrite.id === botMember.roles.highest.id)) {
+    if (botMember && !overwrites.some(overwrite => overwrite.id === botMember.roles.highest.id || overwrite.id === botMember.id)) {
         overwrites.push({ id: botMember.roles.highest.id, type: 0, allow: PermissionsBitField.All, deny: [] });
     }
     return { overwrites, skipped };
