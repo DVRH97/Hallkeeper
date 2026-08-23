@@ -630,6 +630,13 @@ function parseNaturalCategoryVoiceLimitRequest(content) {
     return { categoryName: match[1].trim() };
 }
 
+function parseNaturalRolePermissionCopyRequest(content) {
+    const text = normaliseNaturalRequest(content);
+    let match = text.match(/^(?:copy|clone|transfer)\s+(?:the\s+)?permissions?\s+(?:from|of)\s+(?:the\s+)?(?:role\s+)?(.+?)\s+(?:to|onto|into)\s+(?:the\s+)?(?:role\s+)?(.+?)(?:\s+please)?[.!]?$/i);
+    if (!match) match = text.match(/^(?:give|make)\s+(?:the\s+)?(?:role\s+)?(.+?)\s+(?:the\s+)?same\s+permissions?\s+as\s+(?:the\s+)?(?:role\s+)?(.+?)(?:\s+please)?[.!]?$/i);
+    return match ? { sourceRoleName: match[1].trim(), targetRoleName: match[2].trim() } : null;
+}
+
 function parseNaturalNamedVoiceLimitsRequest(content) {
     const text = normaliseNaturalRequest(content);
     const match = text.match(/^in\s+(.+?)\s+set\s+(.+)$/i);
@@ -876,6 +883,9 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
     }
 
     let match;
+
+    const rolePermissionCopy = parseNaturalRolePermissionCopyRequest(message.content);
+    if (rolePermissionCopy) return await naturalCopyRolePermissions(message, rolePermissionCopy.sourceRoleName, rolePermissionCopy.targetRoleName);
 
     const namedVoiceLimits = parseNaturalNamedVoiceLimitsRequest(message.content);
     if (namedVoiceLimits) {
@@ -1430,6 +1440,29 @@ async function naturalCreateRole(message, roleName) {
     } catch (error) {
         console.error('Create role error:', error);
         await message.reply("❌ I couldn't create that role. Check my permissions.");
+    }
+    return true;
+}
+
+async function naturalCopyRolePermissions(message, sourceRoleName, targetRoleName) {
+    if (!await ensureGuildPermission(message, 'ManageRoles', 'Manage Roles')) return true;
+    const source = message.guild.roles.cache.find(role => role.name.toLowerCase() === sourceRoleName.toLowerCase());
+    const target = message.guild.roles.cache.find(role => role.name.toLowerCase() === targetRoleName.toLowerCase());
+    if (!source) { await message.reply(`❌ I couldn't find a role called **${sourceRoleName}**.`); return true; }
+    if (!target) { await message.reply(`❌ I couldn't find a role called **${targetRoleName}**.`); return true; }
+    if (source.id === target.id) { await message.reply('❌ The source and target roles must be different.'); return true; }
+    const bot = getBotMember(message);
+    if (source.managed || target.managed) { await message.reply("❌ I can't copy permissions to or from a role managed by Discord."); return true; }
+    if (source.position >= bot.roles.highest.position || target.position >= bot.roles.highest.position) {
+        await message.reply("❌ I can't copy those permissions because one of the roles is at or above HallKeeper's highest role.");
+        return true;
+    }
+    try {
+        await target.setPermissions(source.permissions, `Copied permissions from ${source.name} by ${message.author.tag}`);
+        await message.reply(`✅ Copied the permissions from **${source.name}** to **${target.name}**.`);
+    } catch (error) {
+        console.error('Copy role permissions error:', error);
+        await message.reply("❌ I couldn't copy those role permissions. Check Manage Roles and the role hierarchy.");
     }
     return true;
 }
