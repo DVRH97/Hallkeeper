@@ -520,12 +520,30 @@ function parseNaturalPermissionCopyRequest(content) {
 function findPermissionTemplateCategory(guild, name) {
     const exact = findCategory(guild, name);
     if (exact) return exact;
-    if (/gaming/i.test(name)) return guild.channels.cache.find(channel => channel.type === ChannelType.GuildCategory && /gaming/i.test(channel.name)) || null;
+    if (/gaming/i.test(name)) return findGamingPermissionTemplateCategory(guild);
     return null;
+}
+
+function findGamingPermissionTemplateCategory(guild) {
+    for (const source of NEWS_SOURCES) {
+        const category = findCategory(guild, source.category);
+        if (category) return category;
+    }
+    return guild.channels.cache.find(channel =>
+        channel.type === ChannelType.GuildCategory && findTextChannel(guild, 'news', channel.name)
+    ) || null;
 }
 
 function getPermissionOverwrites(channel) {
     return [...channel.permissionOverwrites.cache.values()].map(overwrite => ({ id: overwrite.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }));
+}
+
+async function applyPermissionTemplate(target, source) {
+    const overwrites = getPermissionOverwrites(source);
+    await target.permissionOverwrites.set(overwrites);
+    const childChannels = target.guild.channels.cache.filter(channel => channel.parentId === target.id);
+    for (const channel of childChannels.values()) await channel.permissionOverwrites.set(overwrites);
+    return childChannels.size;
 }
 
 function parseNaturalCategoryPositionRequest(content) {
@@ -794,11 +812,8 @@ async function executeNatural(message, authorisedStaff) {
         if (!target) { await message.reply(`❌ I couldn't find a category called **${permissionCopy.targetCategoryName}**.`); return true; }
         if (source.id === target.id) { await message.reply('❌ The source and target categories must be different.'); return true; }
         try {
-            const overwrites = getPermissionOverwrites(source);
-            await target.permissionOverwrites.set(overwrites);
-            const childChannels = message.guild.channels.cache.filter(channel => channel.parentId === target.id);
-            for (const channel of childChannels.values()) await channel.permissionOverwrites.set(overwrites);
-            await message.reply(`✅ Applied the permissions from **${source.name}** to **${target.name}** and its ${childChannels.size} child channel${childChannels.size === 1 ? '' : 's'}.`);
+            const childChannelCount = await applyPermissionTemplate(target, source);
+            await message.reply(`✅ Applied the permissions from **${source.name}** to **${target.name}** and its ${childChannelCount} child channel${childChannelCount === 1 ? '' : 's'}.`);
         } catch (error) {
             console.error('Natural copy permissions error:', error);
             await message.reply("❌ I couldn't apply those permissions. Check my permissions and role hierarchy.");
@@ -811,7 +826,10 @@ async function executeNatural(message, authorisedStaff) {
         if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
         try {
             let category = findCategory(message.guild, layout.categoryName);
-            if (!category) category = await message.guild.channels.create({ name: layout.categoryName, type: ChannelType.GuildCategory });
+            const categoryWasCreated = !category;
+            if (categoryWasCreated) category = await message.guild.channels.create({ name: layout.categoryName, type: ChannelType.GuildCategory });
+            const permissionTemplate = categoryWasCreated ? findGamingPermissionTemplateCategory(message.guild) : null;
+            if (permissionTemplate) await applyPermissionTemplate(category, permissionTemplate);
             for (const channelName of layout.textChannels) {
                 const name = channelName.toLowerCase().replace(/\s+/g, '-');
                 const existing = message.guild.channels.cache.find(channel => channel.parentId === category.id && channel.type === ChannelType.GuildText && channel.name.toLowerCase() === name);
@@ -821,7 +839,11 @@ async function executeNatural(message, authorisedStaff) {
                 const existing = message.guild.channels.cache.find(channel => channel.parentId === category.id && channel.type === ChannelType.GuildVoice && channel.name.toLowerCase() === name.toLowerCase());
                 if (!existing) await message.guild.channels.create({ name, type: ChannelType.GuildVoice, parent: category.id });
             }
-            await message.reply(`✅ Created or updated **${category.name}** with the requested text and voice channels.`);
+            if (permissionTemplate) await applyPermissionTemplate(category, permissionTemplate);
+            const templateNote = categoryWasCreated && permissionTemplate
+                ? ` Permissions copied from **${permissionTemplate.name}**.`
+                : categoryWasCreated ? ' No gaming permission template was found.' : '';
+            await message.reply(`✅ Created or updated **${category.name}** with the requested text and voice channels.${templateNote}`);
         } catch (error) {
             console.error('Natural create channel layout error:', error);
             await message.reply("❌ I couldn't create that channel layout. Check my permissions.");
