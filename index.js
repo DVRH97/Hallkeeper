@@ -981,11 +981,23 @@ async function naturalUnmute(message, input) {
             await message.reply("❌ I can't unmute that member because of the target or role hierarchy.");
             return true;
         }
-        await member.timeout(null, `Unmuted by ${message.author.tag} using HallAI`);
+        // Use the member edit endpoint explicitly. This sends the required JSON
+        // null for communication_disabled_until, which removes a timeout.
+        // Calling timeout(null) is intended to do the same, but making the
+        // payload explicit avoids clients/API wrappers treating null as absent.
+        await member.edit({
+            communicationDisabledUntil: null,
+            reason: `Unmuted by ${message.author.tag} using HallAI`
+        });
         await message.reply(`🔊 **${member.user.tag}** has been unmuted.`);
     } catch (error) {
         console.error('Unmute error:', error);
-        await message.reply("❌ I couldn't unmute that member.");
+        const status = error?.status ?? error?.code;
+        if (status === 403) {
+            await message.reply("❌ I couldn't unmute that member because HallAI lacks permission or is below the member's highest role.");
+        } else {
+            await message.reply("❌ I couldn't unmute that member. Check HallAI's permissions and role hierarchy.");
+        }
     }
     return true;
 }
