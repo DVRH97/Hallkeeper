@@ -611,7 +611,7 @@ function getPermissionOverwrites(source, target) {
         return [{ id: targetRole.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }];
     });
     if (botMember && !overwrites.some(overwrite => overwrite.id === botMember.roles.highest.id)) {
-        overwrites.push({ id: botMember.roles.highest.id, type: 0, allow: PermissionsBitField.All, deny: 0 });
+        overwrites.push({ id: botMember.roles.highest.id, type: 0, allow: PermissionsBitField.All, deny: [] });
     }
     return { overwrites, skipped };
 }
