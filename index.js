@@ -473,9 +473,46 @@ async function ensureChannelPermission(message, channel, permission, label) {
 function normaliseNaturalRequest(content) {
     return content
         .trim()
+        .replace(/^(?:can|could|would|will)\s+you\s+(?:please\s+)?/i, '')
+        .replace(/^please\s+/i, '')
         .replace(/^(?:hey|hi|hello)\s+(?:hall\s*keeper|hallkeeper)[,!:\s]*/i, '')
         .replace(/^(?:hall\s*keeper|hallkeeper)[,!:\s]*/i, '')
         .trim();
+}
+
+const naturalIntentHistory = new Map();
+
+function naturalIntentKey(message) {
+    return `${message.guild.id}:${message.channel.id}:${message.author.id}`;
+}
+
+function looksLikeNaturalManagementRequest(content) {
+    return /\b(?:create|make|add|build|set\s+up|delete|remove|rename|move|put|place|apply|copy|set|update|change|clear|kick|ban|mute|unmute|warn|role|channel|category|permission|voice|user\s+limit|message)\b/i.test(content);
+}
+
+async function translateNaturalRequest(message, content) {
+    if (!openai) return null;
+    const key = naturalIntentKey(message);
+    const history = naturalIntentHistory.get(key) || [];
+    try {
+        const response = await openai.responses.create({
+            model: AI_MODEL,
+            store: false,
+            max_output_tokens: 350,
+            instructions: 'You are the conversational interpretation layer for a Discord server-management bot. Interpret ordinary human language, not slash commands. Do not execute actions. Return only valid JSON with this shape: {"canonical_request":"...","reply":"..."}. Use canonical_request when the request contains enough information for a supported action; otherwise leave it empty and use reply to ask one concise, natural follow-up question. Never invent category names, channel names, members, roles, limits, or permissions. Preserve names and numbers exactly. Supported canonical requests include creating, deleting, renaming, moving, and listing channels/categories; applying permissions; setting voice limits; managing roles and members; sending messages; and clearing messages. The deterministic handler performs validation and confirmations. If the user is merely chatting or asking an unrelated question, return both fields empty.',
+            input: JSON.stringify({ previous_requests: history, current_request: content })
+        });
+        const raw = response.output_text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return {
+            canonicalRequest: typeof parsed.canonical_request === 'string' ? parsed.canonical_request.trim() : '',
+            reply: typeof parsed.reply === 'string' ? parsed.reply.trim() : ''
+        };
+    } catch (error) {
+        console.error('Natural language translation error:', error);
+        return null;
+    }
 }
 
 function splitNaturalChannelNames(value) {
@@ -811,7 +848,7 @@ function getHelpMessage() {
 💡 You can start requests with \`HallKeeper,\` and use everyday wording such as \`make\`, \`add\`, \`remove\`, \`show\`, or \`please\`—you don't need to use an exact command.`;
 }
 
-async function executeNatural(message, authorisedStaff) {
+async function executeNatural(message, authorisedStaff, translationDepth = 0) {
     if (!authorisedStaff || message.content.startsWith('!')) return false;
 
     const text = normaliseNaturalRequest(message.content);
@@ -1103,6 +1140,24 @@ async function executeNatural(message, authorisedStaff) {
 
     match = text.match(/^(?:check|show|view)\s+(?:the\s+)?(?:channel\s+)?permissions\s+(?:for|of|on)\s+#?(.+?)(?:\s+please)?$/i);
     if (match) return await sendPermissionCheck(message, match[1].trim());
+
+    const intentKey = naturalIntentKey(message);
+    const hasIntentHistory = (naturalIntentHistory.get(intentKey) || []).length > 0;
+    if (translationDepth === 0 && openai && (looksLikeNaturalManagementRequest(message.content) || hasIntentHistory)) {
+        const history = naturalIntentHistory.get(intentKey) || [];
+        history.push(message.content);
+        naturalIntentHistory.set(intentKey, history.slice(-4));
+        const translated = await translateNaturalRequest(message, message.content);
+        if (translated?.canonicalRequest) {
+            const translatedMessage = Object.create(message);
+            translatedMessage.content = translated.canonicalRequest;
+            return await executeNatural(translatedMessage, authorisedStaff, 1);
+        }
+        if (translated?.reply) {
+            await message.reply(translated.reply);
+            return true;
+        }
+    }
 
     return false;
 }
