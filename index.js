@@ -595,7 +595,8 @@ function getPermissionOverwrites(source, target) {
             return [];
         }
         const role = guild.roles.cache.get(overwrite.id);
-        if (!role || role.managed || (role.id !== guild.id && (!botMember || role.position >= botMember.roles.highest.position))) {
+        const isHallkeeperRole = Boolean(botMember && role?.id === botMember.roles.highest.id);
+        if (!role || role.managed || isHallkeeperRole || (role.id !== guild.id && (!botMember || role.position >= botMember.roles.highest.position))) {
             skipped++;
             return [];
         }
