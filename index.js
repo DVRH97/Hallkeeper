@@ -611,7 +611,7 @@ function parseNaturalVoiceLimitRequest(content) {
 
 function parseNaturalCategoryVoiceLimitRequest(content) {
     const text = normaliseNaturalRequest(content);
-    const match = text.match(/^(?:in\s+)?(.+?)(?:\s*[,;:]\s*|\s+)set\s+(?:the\s+)?(?:vc|voice\s+channels?)\s+user\s+limit\s+to\s+(?:the\s+)?matching\s+number(?:\s+please)?[.!]?$/i);
+    const match = text.match(/^(?:in\s+)?(.+?)(?:\s*[,;:]\s*|\s+)set\s+(?:the\s+)?(?:vc|voice\s+channels?)\s+(?:user\s+)?limits?\s+to\s+(?:the\s+)?matching\s+number(?:\s+please)?[.!]?$/i);
     if (!match) return null;
     return { categoryName: match[1].trim() };
 }
