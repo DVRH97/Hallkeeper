@@ -617,6 +617,12 @@ function getPermissionOverwrites(source, target) {
     return { overwrites, skipped };
 }
 
+function permissionNames(value) {
+    return value && typeof value.toArray === 'function'
+        ? value.toArray()
+        : new PermissionsBitField(value || 0).toArray();
+}
+
 async function applyPermissionTemplate(target, source) {
     const { overwrites, skipped } = getPermissionOverwrites(source, target);
     const botRoleId = target.guild.members.me?.roles.highest.id;
@@ -624,12 +630,12 @@ async function applyPermissionTemplate(target, source) {
         Number(b.id === botRoleId) - Number(a.id === botRoleId) || Number(a.id === target.guild.id) - Number(b.id === target.guild.id)
     );
     for (const overwrite of orderedOverwrites) {
-        await target.permissionOverwrites.edit(overwrite.id, { allow: overwrite.allow.toArray(), deny: overwrite.deny.toArray() });
+        await target.permissionOverwrites.edit(overwrite.id, { allow: permissionNames(overwrite.allow), deny: permissionNames(overwrite.deny) });
     }
     const childChannels = target.guild.channels.cache.filter(channel => channel.parentId === target.id);
     for (const channel of childChannels.values()) {
         for (const overwrite of orderedOverwrites) {
-            await channel.permissionOverwrites.edit(overwrite.id, { allow: overwrite.allow.toArray(), deny: overwrite.deny.toArray() });
+            await channel.permissionOverwrites.edit(overwrite.id, { allow: permissionNames(overwrite.allow), deny: permissionNames(overwrite.deny) });
         }
     }
     return { childChannelCount: childChannels.size, skipped };
