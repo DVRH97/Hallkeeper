@@ -574,9 +574,28 @@ function parseNaturalVoiceLimitRequest(content) {
 
 function parseNaturalCategoryVoiceLimitRequest(content) {
     const text = normaliseNaturalRequest(content);
-    const match = text.match(/^(?:in\s+)?(.+?)[,;:]\s*set\s+(?:the\s+)?(?:vc|voice\s+channels?)\s+user\s+limit\s+to\s+(?:the\s+)?matching\s+number(?:\s+please)?[.!]?$/i);
+    const match = text.match(/^(?:in\s+)?(.+?)(?:\s*[,;:]\s*|\s+)set\s+(?:the\s+)?(?:vc|voice\s+channels?)\s+user\s+limit\s+to\s+(?:the\s+)?matching\s+number(?:\s+please)?[.!]?$/i);
     if (!match) return null;
     return { categoryName: match[1].trim() };
+}
+
+function parseNaturalNamedVoiceLimitsRequest(content) {
+    const text = normaliseNaturalRequest(content);
+    const match = text.match(/^in\s+(.+?)\s+set\s+(.+)$/i);
+    if (!match) return null;
+    const groupMatch = match[2].match(/^(.+?)\s+(?:vc|voice\s+channels?)\s+user\s+limits?\s+(?:to|at)\s+(\d+)\s*(?:users?|people|members?)?$/i);
+    if (groupMatch) {
+        const channelNames = groupMatch[1].split(/\s*,\s*|\s+and\s+/i).map(name => name.trim()).filter(Boolean);
+        return channelNames.length ? {
+            categoryName: match[1].trim(),
+            assignments: channelNames.map(channelName => ({ channelName, userLimit: Math.min(Number.parseInt(groupMatch[2], 10), 99) }))
+        } : null;
+    }
+    const assignments = match[2].split(/\s*,\s*|\s+and\s+/i).map(part => {
+        const assignment = part.replace(/^the\s+/i, '').trim().match(/^(.+?)\s+(?:user\s+limit\s+)?(?:to|at)\s+(\d+)\s*(?:users?|people|members?)?$/i);
+        return assignment ? { channelName: assignment[1].trim(), userLimit: Math.min(Number.parseInt(assignment[2], 10), 99) } : null;
+    });
+    return assignments.length && assignments.every(Boolean) ? { categoryName: match[1].trim(), assignments } : null;
 }
 
 function canMakeAiRequest(userId) {
@@ -807,13 +826,41 @@ async function executeNatural(message, authorisedStaff) {
 
     let match;
 
+    const namedVoiceLimits = parseNaturalNamedVoiceLimitsRequest(message.content);
+    if (namedVoiceLimits) {
+        if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
+        const category = findCategory(message.guild, namedVoiceLimits.categoryName);
+        if (!category) { await message.reply(`❌ I couldn't find a category called **${namedVoiceLimits.categoryName}**.`); return true; }
+        const missing = [];
+        const channels = [];
+        for (const assignment of namedVoiceLimits.assignments) {
+            const channel = message.guild.channels.cache.find(candidate =>
+                candidate.parentId === category.id && candidate.type === ChannelType.GuildVoice && candidate.name.toLowerCase() === assignment.channelName.toLowerCase()
+            );
+            if (!channel) missing.push(assignment.channelName);
+            else channels.push({ channel, userLimit: assignment.userLimit });
+        }
+        if (missing.length) { await message.reply(`❌ I couldn't find these voice channels in **${category.name}**: ${missing.map(name => `**${name}**`).join(', ')}.`); return true; }
+        try {
+            for (const item of channels) await item.channel.setUserLimit(item.userLimit);
+            await message.reply(`✅ Updated the user limits for ${channels.length} voice channel${channels.length === 1 ? '' : 's'} in **${category.name}**.`);
+        } catch (error) {
+            console.error('Natural named voice limit error:', error);
+            await message.reply("❌ I couldn't update those voice channel user limits. Check my permissions.");
+        }
+        return true;
+    }
+
     const categoryVoiceLimit = parseNaturalCategoryVoiceLimitRequest(message.content);
     if (categoryVoiceLimit) {
         if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
         const category = findCategory(message.guild, categoryVoiceLimit.categoryName);
         if (!category) { await message.reply(`❌ I couldn't find a category called **${categoryVoiceLimit.categoryName}**.`); return true; }
         const voiceChannels = message.guild.channels.cache.filter(channel => channel.parentId === category.id && channel.type === ChannelType.GuildVoice);
-        const numberedChannels = [...voiceChannels.values()].map(channel => ({ channel, number: Number.parseInt(channel.name.match(/^(\d+)\b/)?.[1] || '', 10) })).filter(item => Number.isFinite(item.number) && item.number <= 99);
+        const numberedChannels = [...voiceChannels.values()].map(channel => ({
+            channel,
+            number: Number.parseInt(channel.name.match(/\b(\d{1,2})\b/)?.[1] || '', 10)
+        })).filter(item => Number.isFinite(item.number) && item.number <= 99);
         if (numberedChannels.length === 0) { await message.reply(`❌ I couldn't find numbered voice channels inside **${category.name}**.`); return true; }
         try {
             for (const item of numberedChannels) await item.channel.setUserLimit(item.number);
