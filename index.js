@@ -565,6 +565,20 @@ function parseNaturalCategoryPositionRequest(content) {
     };
 }
 
+function parseNaturalVoiceLimitRequest(content) {
+    const text = normaliseNaturalRequest(content);
+    const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:set|update|change)\s+(?:the\s+)?user\s+limit\s+(?:for|on|of)\s+#?(.+?)\s+(?:to|at)\s+(\d+)\s*(?:users?|people|members?)?(?:\s+please)?[.!]?$/i);
+    if (!match) return null;
+    return { channelName: match[1].trim(), userLimit: Math.min(Number.parseInt(match[2], 10), 99) };
+}
+
+function parseNaturalCategoryVoiceLimitRequest(content) {
+    const text = normaliseNaturalRequest(content);
+    const match = text.match(/^(?:in\s+)?(.+?)[,;:]\s*set\s+(?:the\s+)?(?:vc|voice\s+channels?)\s+user\s+limit\s+to\s+(?:the\s+)?matching\s+number(?:\s+please)?[.!]?$/i);
+    if (!match) return null;
+    return { categoryName: match[1].trim() };
+}
+
 function canMakeAiRequest(userId) {
     const now = Date.now();
     const recentRequests = (aiRequestTimes.get(userId) || []).filter(
@@ -792,6 +806,41 @@ async function executeNatural(message, authorisedStaff) {
     }
 
     let match;
+
+    const categoryVoiceLimit = parseNaturalCategoryVoiceLimitRequest(message.content);
+    if (categoryVoiceLimit) {
+        if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
+        const category = findCategory(message.guild, categoryVoiceLimit.categoryName);
+        if (!category) { await message.reply(`❌ I couldn't find a category called **${categoryVoiceLimit.categoryName}**.`); return true; }
+        const voiceChannels = message.guild.channels.cache.filter(channel => channel.parentId === category.id && channel.type === ChannelType.GuildVoice);
+        const numberedChannels = [...voiceChannels.values()].map(channel => ({ channel, number: Number.parseInt(channel.name.match(/^(\d+)\b/)?.[1] || '', 10) })).filter(item => Number.isFinite(item.number) && item.number <= 99);
+        if (numberedChannels.length === 0) { await message.reply(`❌ I couldn't find numbered voice channels inside **${category.name}**.`); return true; }
+        try {
+            for (const item of numberedChannels) await item.channel.setUserLimit(item.number);
+            await message.reply(`✅ Set the user limits for ${numberedChannels.length} voice channel${numberedChannels.length === 1 ? '' : 's'} in **${category.name}** to their matching numbers.`);
+        } catch (error) {
+            console.error('Natural category voice limit error:', error);
+            await message.reply("❌ I couldn't update the voice channel user limits. Check my permissions.");
+        }
+        return true;
+    }
+
+    const voiceLimit = parseNaturalVoiceLimitRequest(message.content);
+    if (voiceLimit) {
+        if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
+        const channel = message.guild.channels.cache.find(candidate =>
+            candidate.type === ChannelType.GuildVoice && candidate.name.toLowerCase() === voiceLimit.channelName.toLowerCase()
+        );
+        if (!channel) { await message.reply(`❌ I couldn't find a voice channel called **${voiceLimit.channelName}**.`); return true; }
+        try {
+            await channel.setUserLimit(voiceLimit.userLimit);
+            await message.reply(`✅ Set **${channel.name}** to a maximum of **${voiceLimit.userLimit}** user${voiceLimit.userLimit === 1 ? '' : 's'}.`);
+        } catch (error) {
+            console.error('Natural voice limit error:', error);
+            await message.reply("❌ I couldn't update that voice channel's user limit. Check my permissions.");
+        }
+        return true;
+    }
 
     const categoryPosition = parseNaturalCategoryPositionRequest(message.content);
     if (categoryPosition) {
