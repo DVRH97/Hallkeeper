@@ -557,6 +557,8 @@ function parseNaturalChannelLayout(content) {
 
 function parseNaturalPermissionCopyRequest(content) {
     const text = normaliseNaturalRequest(content);
+    const standardMatch = text.match(/^(?:apply|use|copy)\s+(?:the\s+)?standard\s+category\s+template\s+(?:to|onto|on)\s+(?:the\s+)?(.+?)(?:\s+category)?(?:\s+and\s+(?:its\s+)?channels?)?(?:\s+please)?[.!]?$/i);
+    if (standardMatch) return { sourceCategoryName: 'standard', targetCategoryName: standardMatch[1].trim() };
     const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:apply|copy|use|set)\s+(?:the\s+)?same\s+permissions?\s+as\s+(?:the\s+)?(.+?)(?:\s+category)?\s+(?:to|onto|on|for)\s+(?:the\s+)?(.+?)\s+category(?:\s+and\s+(?:its\s+)?channels?)?(?:\s+please)?[.!]?$/i);
     if (!match) return null;
     const sourceName = match[1].trim().replace(/^other\s+/i, '');
