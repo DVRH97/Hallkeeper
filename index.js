@@ -619,9 +619,19 @@ function getPermissionOverwrites(source, target) {
 
 async function applyPermissionTemplate(target, source) {
     const { overwrites, skipped } = getPermissionOverwrites(source, target);
-    await target.permissionOverwrites.set(overwrites);
+    const botRoleId = target.guild.members.me?.roles.highest.id;
+    const orderedOverwrites = [...overwrites].sort((a, b) =>
+        Number(b.id === botRoleId) - Number(a.id === botRoleId) || Number(a.id === target.guild.id) - Number(b.id === target.guild.id)
+    );
+    for (const overwrite of orderedOverwrites) {
+        await target.permissionOverwrites.edit(overwrite.id, { allow: overwrite.allow, deny: overwrite.deny });
+    }
     const childChannels = target.guild.channels.cache.filter(channel => channel.parentId === target.id);
-    for (const channel of childChannels.values()) await channel.permissionOverwrites.set(overwrites);
+    for (const channel of childChannels.values()) {
+        for (const overwrite of orderedOverwrites) {
+            await channel.permissionOverwrites.edit(overwrite.id, { allow: overwrite.allow, deny: overwrite.deny });
+        }
+    }
     return { childChannelCount: childChannels.size, skipped };
 }
 
