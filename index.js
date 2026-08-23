@@ -228,6 +228,11 @@ async function getNewsWebhook(channel, source) {
     return webhook;
 }
 
+async function newsAlreadyPosted(channel, item) {
+    const messages = await channel.messages.fetch({ limit: 100 });
+    return messages.some(message => message.embeds.some(embed => embed.url === item.url));
+}
+
 async function deliverNews(channel, source, item) {
     const webhook = await getNewsWebhook(channel, source);
     const description = item.description || 'Open the official announcement for details.';
@@ -239,7 +244,9 @@ async function deliverNews(channel, source, item) {
         .setDescription(description.slice(0, 4000))
         .setFooter({ text: 'Official developer/publisher announcement' });
     if (!Number.isNaN(item.publishedAt.getTime())) embed.setTimestamp(item.publishedAt);
+    if (await newsAlreadyPosted(channel, item)) return false;
     await webhook.send({ embeds: [embed] });
+    return true;
 }
 
 async function pollNews({ initialise = false } = {}) {
@@ -267,6 +274,7 @@ async function pollNews({ initialise = false } = {}) {
                     }
                     newsState[stateKey] = [...items.map(item => item.id).filter(Boolean), ...delivered].slice(0, 100);
                     newsState[backfillKey] = NEWS_LATEST_BACKFILL_VERSION;
+                    saveNewsState();
                     continue;
                 }
 
@@ -279,6 +287,7 @@ async function pollNews({ initialise = false } = {}) {
                 const newItems = items.filter(item => item.id && !delivered.has(item.id)).reverse();
                 for (const item of newItems) await deliverNews(channel, source, item);
                 newsState[stateKey] = [...newItems.map(item => item.id), ...delivered].slice(0, 100);
+                saveNewsState();
             } catch (error) {
                 console.error(`News update failed for ${guild.name} / ${source.category}:`, error);
             }
