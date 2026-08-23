@@ -622,6 +622,19 @@ async function applyPermissionTemplate(target, source) {
     return { childChannelCount: childChannels.size, skipped };
 }
 
+async function applyRolePermissionTemplate(targetCategory, sourceCategory) {
+    const guild = targetCategory.guild;
+    const sourceRole = guild.roles.cache.find(role => role.name.toLowerCase() === sourceCategory.name.toLowerCase());
+    const targetRole = guild.roles.cache.find(role => role.name.toLowerCase() === targetCategory.name.toLowerCase());
+    if (!sourceRole || !targetRole) return { copied: false, reason: 'missing-role' };
+    const bot = guild.members.me;
+    if (sourceRole.managed || targetRole.managed || sourceRole.position >= bot.roles.highest.position || targetRole.position >= bot.roles.highest.position) {
+        return { copied: false, reason: 'role-hierarchy' };
+    }
+    await targetRole.setPermissions(sourceRole.permissions, `Applied standard category template from ${sourceCategory.name}`);
+    return { copied: true };
+}
+
 function parseNaturalCategoryPositionRequest(content) {
     const text = normaliseNaturalRequest(content);
     const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:place|put|move)\s+(?:the\s+)?(.+?)\s+category\s+(above|below|before|after|under)\s+(?:the\s+)?(.+?)(?:\s+category)?(?:\s+please)?[.!]?$/i);
@@ -988,16 +1001,19 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
     const permissionCopy = parseNaturalPermissionCopyRequest(message.content);
     if (permissionCopy) {
         if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
+        if (!await ensureGuildPermission(message, 'ManageRoles', 'Manage Roles')) return true;
         const source = findPermissionTemplateCategory(message.guild, permissionCopy.sourceCategoryName);
         const target = findCategory(message.guild, permissionCopy.targetCategoryName);
         if (!source) { await message.reply(`❌ I couldn't find a permission template category matching **${permissionCopy.sourceCategoryName}**.`); return true; }
         if (!target) { await message.reply(`❌ I couldn't find a category called **${permissionCopy.targetCategoryName}**.`); return true; }
         if (source.id === target.id) { await message.reply('❌ The source and target categories must be different.'); return true; }
         try {
+            const roleResult = await applyRolePermissionTemplate(target, source);
             const result = await applyPermissionTemplate(target, source);
             const skippedNote = result.skipped ? ` Skipped ${result.skipped} overwrite${result.skipped === 1 ? '' : 's'} the bot cannot manage.` : '';
+            const roleNote = roleResult.copied ? ' Matching role permissions copied.' : ' Matching role permissions were not changed because the source or target role is missing or not manageable.';
             const templateLabel = permissionCopy.sourceCategoryName === 'standard' ? 'the standard category template' : `**${source.name}**`;
-            await message.reply(`✅ Applied ${templateLabel} to **${target.name}** and its ${result.childChannelCount} child channel${result.childChannelCount === 1 ? '' : 's'}.${skippedNote}`);
+            await message.reply(`✅ Applied ${templateLabel} to **${target.name}** and its ${result.childChannelCount} child channel${result.childChannelCount === 1 ? '' : 's'}.${roleNote}${skippedNote}`);
         } catch (error) {
             console.error('Natural copy permissions error:', error);
             await message.reply("❌ I couldn't apply those permissions. Check my permissions and role hierarchy.");
