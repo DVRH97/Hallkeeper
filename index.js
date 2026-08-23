@@ -3,7 +3,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
-const { Client, GatewayIntentBits, ChannelType, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, PermissionsBitField } = require('discord.js');
 
 const discord = new Client({
     intents: [
@@ -579,10 +579,11 @@ function findGamingPermissionTemplateCategory(guild) {
     ) || null;
 }
 
-function getPermissionOverwrites(channel, guild) {
+function getPermissionOverwrites(source, target) {
+    const guild = target.guild;
     const botMember = guild.members.me;
     let skipped = 0;
-    const overwrites = [...channel.permissionOverwrites.cache.values()].flatMap(overwrite => {
+    const overwrites = [...source.permissionOverwrites.cache.values()].flatMap(overwrite => {
         if (overwrite.type !== 0) {
             skipped++;
             return [];
@@ -592,13 +593,25 @@ function getPermissionOverwrites(channel, guild) {
             skipped++;
             return [];
         }
-        return [{ id: overwrite.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }];
+        const targetRole = role.id === guild.id
+            ? role
+            : role.name.toLowerCase() === source.name.toLowerCase()
+                ? guild.roles.cache.find(candidate => candidate.name.toLowerCase() === target.name.toLowerCase())
+                : role;
+        if (!targetRole) {
+            skipped++;
+            return [];
+        }
+        return [{ id: targetRole.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }];
     });
+    if (botMember && !overwrites.some(overwrite => overwrite.id === botMember.roles.highest.id)) {
+        overwrites.push({ id: botMember.roles.highest.id, type: 0, allow: PermissionsBitField.All, deny: 0 });
+    }
     return { overwrites, skipped };
 }
 
 async function applyPermissionTemplate(target, source) {
-    const { overwrites, skipped } = getPermissionOverwrites(source, target.guild);
+    const { overwrites, skipped } = getPermissionOverwrites(source, target);
     await target.permissionOverwrites.set(overwrites);
     const childChannels = target.guild.channels.cache.filter(channel => channel.parentId === target.id);
     for (const channel of childChannels.values()) await channel.permissionOverwrites.set(overwrites);
