@@ -488,7 +488,9 @@ function parseNaturalChannelLayout(content) {
     const categoryMatch = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:create|make|add|set\s+up)\s+(?:a\s+)?(?:new\s+)?(.+?)\s+category\s+with\s+(.+)$/i);
     if (!categoryMatch) return null;
     const categoryName = categoryMatch[1].trim();
-    const remainder = categoryMatch[2].trim();
+    let remainder = categoryMatch[2].trim();
+    const correspondingLimitRequested = /set\s+(?:the\s+)?user\s+limit\s+(?:per\s+channel\s+)?to\s+the\s+corresponding\s+number/i.test(remainder);
+    remainder = remainder.replace(/\s*(?:[.!]?\s+and\s+)?set\s+(?:the\s+)?user\s+limit\s+(?:per\s+channel\s+)?to\s+the\s+corresponding\s+number[.!]?\s*$/i, '').trim();
     const voiceMatch = remainder.match(/^(.*?)(?:[.!]?\s+and\s+)?(\d+)\s+voice\s+channels?\s+(?:called|named)\s+(.+?)[.!]?$/i);
     let textChannelPart = remainder;
     let voiceChannels = [];
@@ -501,10 +503,16 @@ function parseNaturalChannelLayout(content) {
             const first = Number.parseInt(range[1], 10);
             const last = Number.parseInt(range[2], 10);
             if (last >= first && last - first + 1 <= 50) {
-                voiceChannels = Array.from({ length: last - first + 1 }, (_, offset) => `${first + offset} ${range[3].trim()}`);
+                voiceChannels = Array.from({ length: last - first + 1 }, (_, offset) => ({
+                    name: `${first + offset} ${range[3].trim()}`,
+                    userLimit: correspondingLimitRequested ? first + offset : null
+                }));
             }
         }
-        if (voiceChannels.length === 0) voiceChannels = Array.from({ length: Math.min(count, 50) }, (_, index) => `${index + 1} ${voiceName}`);
+        if (voiceChannels.length === 0) voiceChannels = Array.from({ length: Math.min(count, 50) }, (_, index) => ({
+            name: `${index + 1} ${voiceName}`,
+            userLimit: correspondingLimitRequested ? index + 1 : null
+        }));
     }
     const textChannels = splitNaturalChannelNames(textChannelPart.replace(/\s+text\s+channels?\s*$/i, ''));
     return textChannels.length && voiceChannels.length ? { categoryName, textChannels, voiceChannels } : null;
@@ -835,9 +843,20 @@ async function executeNatural(message, authorisedStaff) {
                 const existing = message.guild.channels.cache.find(channel => channel.parentId === category.id && channel.type === ChannelType.GuildText && channel.name.toLowerCase() === name);
                 if (!existing) await message.guild.channels.create({ name, type: ChannelType.GuildText, parent: category.id });
             }
-            for (const name of layout.voiceChannels) {
-                const existing = message.guild.channels.cache.find(channel => channel.parentId === category.id && channel.type === ChannelType.GuildVoice && channel.name.toLowerCase() === name.toLowerCase());
-                if (!existing) await message.guild.channels.create({ name, type: ChannelType.GuildVoice, parent: category.id });
+            for (const voiceChannel of layout.voiceChannels) {
+                const existing = message.guild.channels.cache.find(channel => channel.parentId === category.id && channel.type === ChannelType.GuildVoice && channel.name.toLowerCase() === voiceChannel.name.toLowerCase());
+                if (existing) {
+                    if (voiceChannel.userLimit !== null && existing.userLimit !== voiceChannel.userLimit) {
+                        await existing.setUserLimit(voiceChannel.userLimit);
+                    }
+                } else {
+                    await message.guild.channels.create({
+                        name: voiceChannel.name,
+                        type: ChannelType.GuildVoice,
+                        parent: category.id,
+                        userLimit: voiceChannel.userLimit ?? 0
+                    });
+                }
             }
             if (permissionTemplate) await applyPermissionTemplate(category, permissionTemplate);
             const templateNote = categoryWasCreated && permissionTemplate
