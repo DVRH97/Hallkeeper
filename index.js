@@ -434,13 +434,13 @@ function naturalHelpRequested(content) {
         'show me your commands',
         'list commands',
         'what can you do',
-        'what can hallai do',
+        'what can hallkeeper do',
         'what commands do you have',
-        'what can hall ai do',
+        'what can hall keeper do',
         'what are your commands',
         'what are the commands',
         'how do i use you',
-        'how do i use hallai'
+        'how do i use hallkeeper'
     ].includes(helpRequest);
 }
 
@@ -460,22 +460,72 @@ function findChannel(guild, name, categoryName = null) {
 
 async function ensureGuildPermission(message, permission, label) {
     if (getBotMember(message).permissions.has(permission)) return true;
-    await message.reply(`❌ HallAI doesn't have the **${label}** permission.`);
+    await message.reply(`❌ HallKeeper doesn't have the **${label}** permission.`);
     return false;
 }
 
 async function ensureChannelPermission(message, channel, permission, label) {
     if (channel.permissionsFor(getBotMember(message)).has(permission)) return true;
-    await message.reply(`❌ HallAI doesn't have the **${label}** permission in ${channel}.`);
+    await message.reply(`❌ HallKeeper doesn't have the **${label}** permission in ${channel}.`);
     return false;
 }
 
 function normaliseNaturalRequest(content) {
     return content
         .trim()
-        .replace(/^(?:hey|hi|hello)\s+(?:hall\s*ai|hallai)[,!:\s]*/i, '')
-        .replace(/^(?:hall\s*ai|hallai)[,!:\s]*/i, '')
+        .replace(/^(?:hey|hi|hello)\s+(?:hall\s*keeper|hallkeeper)[,!:\s]*/i, '')
+        .replace(/^(?:hall\s*keeper|hallkeeper)[,!:\s]*/i, '')
         .trim();
+}
+
+function splitNaturalChannelNames(value) {
+    return value.replace(/[.!?]+\s*$/, '').split(/\s*(?:,|\band\b)\s*/i)
+        .map(name => name.trim().replace(/^['"`]|['"`]$/g, '')).filter(Boolean);
+}
+
+function parseNaturalChannelLayout(content) {
+    const text = normaliseNaturalRequest(content);
+    const categoryMatch = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:create|make|add|set\s+up)\s+(?:a\s+)?(?:new\s+)?(.+?)\s+category\s+with\s+(.+)$/i);
+    if (!categoryMatch) return null;
+    const categoryName = categoryMatch[1].trim();
+    const remainder = categoryMatch[2].trim();
+    const voiceMatch = remainder.match(/^(.*?)(?:[.!]?\s+and\s+)?(\d+)\s+voice\s+channels?\s+(?:called|named)\s+(.+?)[.!]?$/i);
+    let textChannelPart = remainder;
+    let voiceChannels = [];
+    if (voiceMatch) {
+        textChannelPart = voiceMatch[1].trim().replace(/[.!]+$/, '').trim();
+        const count = Number.parseInt(voiceMatch[2], 10);
+        const voiceName = voiceMatch[3].trim().replace(/^['"`]|['"`]$/g, '');
+        const range = voiceName.match(/^(\d+)\s*[-–]\s*(\d+)\s+(.+)$/);
+        if (range) {
+            const first = Number.parseInt(range[1], 10);
+            const last = Number.parseInt(range[2], 10);
+            if (last >= first && last - first + 1 <= 50) {
+                voiceChannels = Array.from({ length: last - first + 1 }, (_, offset) => `${first + offset} ${range[3].trim()}`);
+            }
+        }
+        if (voiceChannels.length === 0) voiceChannels = Array.from({ length: Math.min(count, 50) }, (_, index) => `${index + 1} ${voiceName}`);
+    }
+    const textChannels = splitNaturalChannelNames(textChannelPart.replace(/\s+text\s+channels?\s*$/i, ''));
+    return textChannels.length && voiceChannels.length ? { categoryName, textChannels, voiceChannels } : null;
+}
+
+function parseNaturalPermissionCopyRequest(content) {
+    const text = normaliseNaturalRequest(content);
+    const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:apply|copy|use|set)\s+(?:the\s+)?same\s+permissions?\s+as\s+(?:the\s+)?(.+?)\s+categories?\s+(?:to|onto|on|for)\s+(?:the\s+)?(.+?)\s+category(?:\s+please)?[.!]?$/i);
+    if (!match) return null;
+    return { sourceCategoryName: match[1].trim().replace(/^other\s+/i, ''), targetCategoryName: match[2].trim() };
+}
+
+function findPermissionTemplateCategory(guild, name) {
+    const exact = findCategory(guild, name);
+    if (exact) return exact;
+    if (/gaming/i.test(name)) return guild.channels.cache.find(channel => channel.type === ChannelType.GuildCategory && /gaming/i.test(channel.name)) || null;
+    return null;
+}
+
+function getPermissionOverwrites(channel) {
+    return [...channel.permissionOverwrites.cache.values()].map(overwrite => ({ id: overwrite.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }));
 }
 
 function canMakeAiRequest(userId) {
@@ -523,7 +573,7 @@ function clearExpiredAiConversations() {
 function buildConversationPrompt(conversation, prompt) {
     if (!conversation) return prompt;
     const history = conversation.turns
-        .map(turn => `Member: ${turn.prompt}\nHallAI: ${turn.reply}`)
+        .map(turn => `Member: ${turn.prompt}\nHallKeeper: ${turn.reply}`)
         .join('\n\n');
     return `Continue this conversation using only the context below.\n\n${history}\n\nMember: ${prompt}`;
 }
@@ -558,7 +608,7 @@ async function handleAiMessage(message) {
 
     if (!prompt) {
         await message.reply(isMention
-            ? 'Ask me a question after mentioning me. Example: `@HallAI explain subnetting simply`'
+            ? 'Ask me a question after mentioning me. Example: `@HallKeeper explain subnetting simply`'
             : 'Reply with a follow-up question, or mention me to start a new topic.');
         return true;
     }
@@ -586,7 +636,7 @@ async function handleAiMessage(message) {
             model: AI_MODEL,
             store: false,
             max_output_tokens: AI_MAX_OUTPUT_TOKENS,
-            instructions: 'You are HallAI, a helpful Discord assistant. Give accurate, concise, friendly answers. Use Discord-friendly Markdown. Do not claim to be a server moderator or take actions in Discord. If a question needs current information, say that you cannot verify it unless a source is provided.',
+            instructions: 'You are HallKeeper, a helpful Discord assistant. Give accurate, concise, friendly answers. Use Discord-friendly Markdown. Do not claim to be a server moderator or take actions in Discord. If a question needs current information, say that you cannot verify it unless a source is provided.',
             input: buildConversationPrompt(isConversationReply ? conversation : null, prompt)
         });
         const sentMessages = await sendAiReply(message, response.output_text);
@@ -608,7 +658,7 @@ async function handleAiMessage(message) {
 }
 
 function getHelpMessage() {
-    return `🤖 **HallAI — Available Commands**
+    return `🤖 **HallKeeper — Available Commands**
 
 ### 📁 Channels & Categories
 • **Create a channel**
@@ -679,8 +729,8 @@ function getHelpMessage() {
 
 
 ### 🔧 Other
-• **Ask HallAI a question**
-  Example: \`@HallAI explain subnetting simply\`
+• **Ask HallKeeper a question**
+  Example: \`@HallKeeper explain subnetting simply\`
 
 • **Check channel permissions**
   Example: \`Check permissions for general\`
@@ -688,7 +738,7 @@ function getHelpMessage() {
 • **Ask me what I can do**
   Example: \`What can you do?\`
 
-💡 You can start requests with \`HallAI,\` and use everyday wording such as \`make\`, \`add\`, \`remove\`, \`show\`, or \`please\`—you don't need to use an exact command.`;
+💡 You can start requests with \`HallKeeper,\` and use everyday wording such as \`make\`, \`add\`, \`remove\`, \`show\`, or \`please\`—you don't need to use an exact command.`;
 }
 
 async function executeNatural(message, authorisedStaff) {
@@ -705,6 +755,50 @@ async function executeNatural(message, authorisedStaff) {
     }
 
     let match;
+
+    const permissionCopy = parseNaturalPermissionCopyRequest(message.content);
+    if (permissionCopy) {
+        if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
+        const source = findPermissionTemplateCategory(message.guild, permissionCopy.sourceCategoryName);
+        const target = findCategory(message.guild, permissionCopy.targetCategoryName);
+        if (!source) { await message.reply(`❌ I couldn't find a permission template category matching **${permissionCopy.sourceCategoryName}**.`); return true; }
+        if (!target) { await message.reply(`❌ I couldn't find a category called **${permissionCopy.targetCategoryName}**.`); return true; }
+        if (source.id === target.id) { await message.reply('❌ The source and target categories must be different.'); return true; }
+        try {
+            const overwrites = getPermissionOverwrites(source);
+            await target.permissionOverwrites.set(overwrites);
+            const childChannels = message.guild.channels.cache.filter(channel => channel.parentId === target.id);
+            for (const channel of childChannels.values()) await channel.permissionOverwrites.set(overwrites);
+            await message.reply(`✅ Applied the permissions from **${source.name}** to **${target.name}** and its ${childChannels.size} child channel${childChannels.size === 1 ? '' : 's'}.`);
+        } catch (error) {
+            console.error('Natural copy permissions error:', error);
+            await message.reply("❌ I couldn't apply those permissions. Check my permissions and role hierarchy.");
+        }
+        return true;
+    }
+
+    const layout = parseNaturalChannelLayout(message.content);
+    if (layout) {
+        if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
+        try {
+            let category = findCategory(message.guild, layout.categoryName);
+            if (!category) category = await message.guild.channels.create({ name: layout.categoryName, type: ChannelType.GuildCategory });
+            for (const channelName of layout.textChannels) {
+                const name = channelName.toLowerCase().replace(/\s+/g, '-');
+                const existing = message.guild.channels.cache.find(channel => channel.parentId === category.id && channel.type === ChannelType.GuildText && channel.name.toLowerCase() === name);
+                if (!existing) await message.guild.channels.create({ name, type: ChannelType.GuildText, parent: category.id });
+            }
+            for (const name of layout.voiceChannels) {
+                const existing = message.guild.channels.cache.find(channel => channel.parentId === category.id && channel.type === ChannelType.GuildVoice && channel.name.toLowerCase() === name.toLowerCase());
+                if (!existing) await message.guild.channels.create({ name, type: ChannelType.GuildVoice, parent: category.id });
+            }
+            await message.reply(`✅ Created or updated **${category.name}** with the requested text and voice channels.`);
+        } catch (error) {
+            console.error('Natural create channel layout error:', error);
+            await message.reply("❌ I couldn't create that channel layout. Check my permissions.");
+        }
+        return true;
+    }
 
     match = text.match(/^(?:create|make|add|set\s+up)\s+(?:a\s+)?(?:new\s+)?(?:text\s+)?channel\s+(?:called|named)?\s*(.+?)\s+(?:in|under|inside)\s+(?:the\s+)?(?:category\s+)?(.+?)(?:\s+please)?$/i);
     if (match) {
@@ -886,7 +980,7 @@ async function naturalKick(message, input) {
         }
         const bot = getBotMember(message);
         if (!bot.permissions.has('KickMembers')) {
-            await message.reply("❌ HallAI doesn't have the **Kick Members** permission.");
+            await message.reply("❌ HallKeeper doesn't have the **Kick Members** permission.");
             return true;
         }
         if (member.id === message.author.id || member.id === bot.id) {
@@ -898,11 +992,11 @@ async function naturalKick(message, input) {
             return true;
         }
         const name = member.user.tag;
-        await member.kick(`Kicked by ${message.author.tag} using HallAI`);
+        await member.kick(`Kicked by ${message.author.tag} using HallKeeper`);
         await message.reply(`✅ Kicked **${name}** from the server.`);
     } catch (error) {
         console.error('Kick error:', error);
-        await message.reply("❌ I couldn't kick that member. Check HallAI's permissions and role hierarchy.");
+        await message.reply("❌ I couldn't kick that member. Check HallKeeper's permissions and role hierarchy.");
     }
     return true;
 }
@@ -916,7 +1010,7 @@ async function naturalBan(message, input) {
         }
         const bot = getBotMember(message);
         if (!bot.permissions.has('BanMembers')) {
-            await message.reply("❌ HallAI doesn't have the **Ban Members** permission.");
+            await message.reply("❌ HallKeeper doesn't have the **Ban Members** permission.");
             return true;
         }
         if (member.id === message.author.id || member.id === bot.id || !member.bannable) {
@@ -924,11 +1018,11 @@ async function naturalBan(message, input) {
             return true;
         }
         const name = member.user.tag;
-        await member.ban({ reason: `Banned by ${message.author.tag} using HallAI` });
+        await member.ban({ reason: `Banned by ${message.author.tag} using HallKeeper` });
         await message.reply(`🔨 **${name}** has been banned from the server.`);
     } catch (error) {
         console.error('Ban error:', error);
-        await message.reply("❌ I couldn't ban that member. Check HallAI's permissions and role hierarchy.");
+        await message.reply("❌ I couldn't ban that member. Check HallKeeper's permissions and role hierarchy.");
     }
     return true;
 }
@@ -945,7 +1039,7 @@ async function naturalMute(message, input, duration) {
         const durationMs = unit === 's' ? amount * 1000 : unit === 'm' ? amount * 60000 : unit === 'h' ? amount * 3600000 : amount * 86400000;
         const bot = getBotMember(message);
         if (!bot.permissions.has('ModerateMembers')) {
-            await message.reply("❌ HallAI doesn't have the **Moderate Members** permission.");
+            await message.reply("❌ HallKeeper doesn't have the **Moderate Members** permission.");
             return true;
         }
         if (durationMs < 1000 || durationMs > 28 * 86400000) {
@@ -956,11 +1050,11 @@ async function naturalMute(message, input, duration) {
             await message.reply("❌ I can't mute that member because of the target or role hierarchy.");
             return true;
         }
-        await member.timeout(durationMs, `Muted by ${message.author.tag} using HallAI`);
+        await member.timeout(durationMs, `Muted by ${message.author.tag} using HallKeeper`);
         await message.reply(`🔇 **${member.user.tag}** has been muted for **${duration}**.`);
     } catch (error) {
         console.error('Mute error:', error);
-        await message.reply("❌ I couldn't mute that member. Check HallAI's permissions and role hierarchy.");
+        await message.reply("❌ I couldn't mute that member. Check HallKeeper's permissions and role hierarchy.");
     }
     return true;
 }
@@ -974,7 +1068,7 @@ async function naturalUnmute(message, input) {
         }
         const bot = getBotMember(message);
         if (!bot.permissions.has('ModerateMembers')) {
-            await message.reply("❌ HallAI doesn't have the **Moderate Members** permission.");
+            await message.reply("❌ HallKeeper doesn't have the **Moderate Members** permission.");
             return true;
         }
         if (member.id === message.author.id || member.id === bot.id || !member.moderatable) {
@@ -987,16 +1081,16 @@ async function naturalUnmute(message, input) {
         // payload explicit avoids clients/API wrappers treating null as absent.
         await member.edit({
             communicationDisabledUntil: null,
-            reason: `Unmuted by ${message.author.tag} using HallAI`
+            reason: `Unmuted by ${message.author.tag} using HallKeeper`
         });
         await message.reply(`🔊 **${member.user.tag}** has been unmuted.`);
     } catch (error) {
         console.error('Unmute error:', error);
         const status = error?.status ?? error?.code;
         if (status === 403) {
-            await message.reply("❌ I couldn't unmute that member because HallAI lacks permission or is below the member's highest role.");
+            await message.reply("❌ I couldn't unmute that member because HallKeeper lacks permission or is below the member's highest role.");
         } else {
-            await message.reply("❌ I couldn't unmute that member. Check HallAI's permissions and role hierarchy.");
+            await message.reply("❌ I couldn't unmute that member. Check HallKeeper's permissions and role hierarchy.");
         }
     }
     return true;
@@ -1009,7 +1103,7 @@ async function naturalClear(message, amount) {
     }
     const bot = getBotMember(message);
     if (!bot.permissionsIn(message.channel).has('ManageMessages')) {
-        await message.reply("❌ HallAI doesn't have the **Manage Messages** permission in this channel.");
+            await message.reply("❌ HallKeeper doesn't have the **Manage Messages** permission in this channel.");
         return true;
     }
     try {
@@ -1025,7 +1119,7 @@ async function naturalClear(message, amount) {
 async function naturalClearAll(message) {
     const bot = getBotMember(message);
     if (!bot.permissionsIn(message.channel).has('ManageMessages')) {
-        await message.reply("❌ HallAI doesn't have the **Manage Messages** permission in this channel.");
+            await message.reply("❌ HallKeeper doesn't have the **Manage Messages** permission in this channel.");
         return true;
     }
     try {
