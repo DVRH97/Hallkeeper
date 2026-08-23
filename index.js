@@ -624,12 +624,12 @@ async function applyPermissionTemplate(target, source) {
         Number(b.id === botRoleId) - Number(a.id === botRoleId) || Number(a.id === target.guild.id) - Number(b.id === target.guild.id)
     );
     for (const overwrite of orderedOverwrites) {
-        await target.permissionOverwrites.edit(overwrite.id, { allow: overwrite.allow, deny: overwrite.deny });
+        await target.permissionOverwrites.edit(overwrite.id, { allow: overwrite.allow.toArray(), deny: overwrite.deny.toArray() });
     }
     const childChannels = target.guild.channels.cache.filter(channel => channel.parentId === target.id);
     for (const channel of childChannels.values()) {
         for (const overwrite of orderedOverwrites) {
-            await channel.permissionOverwrites.edit(overwrite.id, { allow: overwrite.allow, deny: overwrite.deny });
+            await channel.permissionOverwrites.edit(overwrite.id, { allow: overwrite.allow.toArray(), deny: overwrite.deny.toArray() });
         }
     }
     return { childChannelCount: childChannels.size, skipped };
