@@ -579,16 +579,30 @@ function findGamingPermissionTemplateCategory(guild) {
     ) || null;
 }
 
-function getPermissionOverwrites(channel) {
-    return [...channel.permissionOverwrites.cache.values()].map(overwrite => ({ id: overwrite.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }));
+function getPermissionOverwrites(channel, guild) {
+    const botMember = guild.members.me;
+    let skipped = 0;
+    const overwrites = [...channel.permissionOverwrites.cache.values()].flatMap(overwrite => {
+        if (overwrite.type !== 0) {
+            skipped++;
+            return [];
+        }
+        const role = guild.roles.cache.get(overwrite.id);
+        if (!role || role.managed || (role.id !== guild.id && (!botMember || role.position >= botMember.roles.highest.position))) {
+            skipped++;
+            return [];
+        }
+        return [{ id: overwrite.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }];
+    });
+    return { overwrites, skipped };
 }
 
 async function applyPermissionTemplate(target, source) {
-    const overwrites = getPermissionOverwrites(source);
+    const { overwrites, skipped } = getPermissionOverwrites(source, target.guild);
     await target.permissionOverwrites.set(overwrites);
     const childChannels = target.guild.channels.cache.filter(channel => channel.parentId === target.id);
     for (const channel of childChannels.values()) await channel.permissionOverwrites.set(overwrites);
-    return childChannels.size;
+    return { childChannelCount: childChannels.size, skipped };
 }
 
 function parseNaturalCategoryPositionRequest(content) {
@@ -953,8 +967,9 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
         if (!target) { await message.reply(`❌ I couldn't find a category called **${permissionCopy.targetCategoryName}**.`); return true; }
         if (source.id === target.id) { await message.reply('❌ The source and target categories must be different.'); return true; }
         try {
-            const childChannelCount = await applyPermissionTemplate(target, source);
-            await message.reply(`✅ Applied the permissions from **${source.name}** to **${target.name}** and its ${childChannelCount} child channel${childChannelCount === 1 ? '' : 's'}.`);
+            const result = await applyPermissionTemplate(target, source);
+            const skippedNote = result.skipped ? ` Skipped ${result.skipped} overwrite${result.skipped === 1 ? '' : 's'} the bot cannot manage.` : '';
+            await message.reply(`✅ Applied the permissions from **${source.name}** to **${target.name}** and its ${result.childChannelCount} child channel${result.childChannelCount === 1 ? '' : 's'}.${skippedNote}`);
         } catch (error) {
             console.error('Natural copy permissions error:', error);
             await message.reply("❌ I couldn't apply those permissions. Check my permissions and role hierarchy.");
