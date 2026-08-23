@@ -528,6 +528,17 @@ function getPermissionOverwrites(channel) {
     return [...channel.permissionOverwrites.cache.values()].map(overwrite => ({ id: overwrite.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }));
 }
 
+function parseNaturalCategoryPositionRequest(content) {
+    const text = normaliseNaturalRequest(content);
+    const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:place|put|move)\s+(?:the\s+)?(.+?)\s+category\s+(above|below|before|after|under)\s+(?:the\s+)?(.+?)(?:\s+category)?(?:\s+please)?[.!]?$/i);
+    if (!match) return null;
+    return {
+        categoryName: match[1].trim(),
+        direction: /above|before/i.test(match[2]) ? 'above' : 'below',
+        referenceCategoryName: match[3].trim()
+    };
+}
+
 function canMakeAiRequest(userId) {
     const now = Date.now();
     const recentRequests = (aiRequestTimes.get(userId) || []).filter(
@@ -755,6 +766,24 @@ async function executeNatural(message, authorisedStaff) {
     }
 
     let match;
+
+    const categoryPosition = parseNaturalCategoryPositionRequest(message.content);
+    if (categoryPosition) {
+        if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
+        const category = findCategory(message.guild, categoryPosition.categoryName);
+        const reference = findCategory(message.guild, categoryPosition.referenceCategoryName);
+        if (!category) { await message.reply(`❌ I couldn't find a category called **${categoryPosition.categoryName}**.`); return true; }
+        if (!reference) { await message.reply(`❌ I couldn't find a category called **${categoryPosition.referenceCategoryName}**.`); return true; }
+        if (category.id === reference.id) { await message.reply('❌ The category cannot be positioned relative to itself.'); return true; }
+        try {
+            await category.setPosition(reference.position + (categoryPosition.direction === 'below' ? 1 : 0));
+            await message.reply(`✅ Moved **${category.name}** ${categoryPosition.direction} **${reference.name}**.`);
+        } catch (error) {
+            console.error('Natural category position error:', error);
+            await message.reply("❌ I couldn't move that category. Check my permissions.");
+        }
+        return true;
+    }
 
     const permissionCopy = parseNaturalPermissionCopyRequest(message.content);
     if (permissionCopy) {
