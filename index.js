@@ -762,6 +762,17 @@ function parseNaturalCategoryPositionRequest(content) {
     };
 }
 
+function parseNaturalChannelPositionRequest(content) {
+    const text = normaliseNaturalRequest(content);
+    const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:place|put|move)\s+(?:the\s+)?(?:channel\s+)?#?(.+?)\s+(above|below|before|after)\s+(?:the\s+)?(?:channel\s+)?#?(.+?)(?:\s+please)?[.!]?$/i);
+    if (!match) return null;
+    return {
+        channelName: match[1].trim(),
+        direction: /above|before/i.test(match[2]) ? 'above' : 'below',
+        referenceChannelName: match[3].trim()
+    };
+}
+
 function parseNaturalVoiceLimitRequest(content) {
     const text = normaliseNaturalRequest(content);
     const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:set|update|change)\s+(?:the\s+)?user\s+limit\s+(?:for|on|of)\s+#?(.+?)\s+(?:to|at)\s+(\d+)\s*(?:users?|people|members?)?(?:\s+please)?[.!]?$/i);
@@ -1111,6 +1122,28 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
         } catch (error) {
             console.error('Natural category position error:', error);
             await message.reply("❌ I couldn't move that category. Check my permissions.");
+        }
+        return true;
+    }
+
+    const channelPosition = parseNaturalChannelPositionRequest(message.content);
+    if (channelPosition) {
+        if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
+        const channel = findChannel(message.guild, channelPosition.channelName);
+        const reference = findChannel(message.guild, channelPosition.referenceChannelName);
+        if (!channel) { await message.reply(`❌ I couldn't find **#${channelPosition.channelName}**.`); return true; }
+        if (!reference) { await message.reply(`❌ I couldn't find **#${channelPosition.referenceChannelName}**.`); return true; }
+        if (channel.id === reference.id) { await message.reply('❌ A channel cannot be positioned relative to itself.'); return true; }
+        if ((channel.parentId || null) !== (reference.parentId || null)) {
+            await message.reply('❌ Both channels must be inside the same category to be positioned relative to each other.');
+            return true;
+        }
+        try {
+            await channel.setPosition(reference.position + (channelPosition.direction === 'below' ? 1 : 0));
+            await message.reply(`✅ Moved **${channel.name}** ${channelPosition.direction} **${reference.name}**.`);
+        } catch (error) {
+            console.error('Natural channel position error:', error);
+            await message.reply("❌ I couldn't move that channel. Check my permissions.");
         }
         return true;
     }
@@ -2118,5 +2151,6 @@ module.exports = {
     parseClearTimeRequest,
     parseClockTime,
     zonedDateTimeToDate,
-    parseNaturalChannelLayout
+    parseNaturalChannelLayout,
+    parseNaturalChannelPositionRequest
 };

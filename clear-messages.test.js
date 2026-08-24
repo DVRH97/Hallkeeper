@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseClearTimeRequest, parseNaturalChannelLayout } = require('./index');
+const { parseClearTimeRequest, parseNaturalChannelLayout, parseNaturalChannelPositionRequest } = require('./index');
 
 const now = new Date('2026-08-23T12:00:00.000Z');
 
@@ -38,4 +38,17 @@ test('parses a numbered voice-only request with a category and named range', () 
         { name: 'Duo 2', userLimit: null },
         { name: 'Duo 3', userLimit: null }
     ]);
+});
+
+test('parses relative channel positioning requests', () => {
+    assert.deepEqual(parseNaturalChannelPositionRequest('Move general above rules'), {
+        channelName: 'general',
+        direction: 'above',
+        referenceChannelName: 'rules'
+    });
+    assert.deepEqual(parseNaturalChannelPositionRequest('Place #voice-chat below channel lobby'), {
+        channelName: 'voice-chat',
+        direction: 'below',
+        referenceChannelName: 'lobby'
+    });
 });
