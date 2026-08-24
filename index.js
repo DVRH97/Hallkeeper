@@ -3,7 +3,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
-const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 
 const discord = new Client({
     intents: [
@@ -50,6 +50,42 @@ const NEWS_SOURCES = [
     { key: 'valorant', category: 'Valorant', label: 'VALORANT', type: 'valorant' },
     { key: 'destiny', category: 'Destiny', label: 'Destiny 2', type: 'steam', appId: 1085660 }
 ];
+
+// Named permission templates. Add future templates here without changing the
+// role/category application logic below.
+const PERMISSION_TEMPLATES = Object.freeze({
+    standard: Object.freeze({
+        label: 'Standard Permissions Template',
+        aliases: Object.freeze(['standard permissions template', 'standard template', 'permissions template', 'permissions']),
+        permissions: Object.freeze([
+    'CreateInstantInvite',
+    'AddReactions',
+    'Stream',
+    'ViewChannel',
+    'SendMessages',
+    'EmbedLinks',
+    'AttachFiles',
+    'ReadMessageHistory',
+    'UseExternalEmojis',
+    'Connect',
+    'Speak',
+    'CreatePublicThreads',
+    'SendMessagesInThreads',
+    'PinMessages',
+    'SendTTSMessages',
+    'SendVoiceMessages',
+    'UseEmbeddedActivities',
+    'UseSoundboard',
+    'UseExternalSounds',
+    'SendPolls',
+        ])
+    })
+});
+
+function findPermissionTemplate(name) {
+    const normalised = name.trim().toLowerCase().replace(/\s+/g, ' ');
+    return Object.values(PERMISSION_TEMPLATES).find(template => template.aliases.includes(normalised)) || null;
+}
 
 function loadNewsState() {
     try {
@@ -487,7 +523,7 @@ function naturalIntentKey(message) {
 }
 
 function looksLikeNaturalManagementRequest(content) {
-    return /\b(?:create|make|add|build|set\s+up|delete|remove|rename|move|put|place|apply|copy|set|update|change|clear|kick|ban|mute|unmute|warn|role|channel|category|permission|voice|user\s+limit|message)\b/i.test(content);
+    return /\b(?:create|make|add|build|set\s+up|delete|remove|rename|move|put|place|apply|set|update|change|clear|kick|ban|mute|unmute|warn|role|channel|category|permission|voice|user\s+limit|message)\b/i.test(content);
 }
 
 async function translateNaturalRequest(message, content) {
@@ -555,107 +591,41 @@ function parseNaturalChannelLayout(content) {
     return textChannels.length && voiceChannels.length ? { categoryName, textChannels, voiceChannels } : null;
 }
 
-function parseNaturalPermissionCopyRequest(content) {
+function parseNaturalPermissionApplyRequest(content) {
     const text = normaliseNaturalRequest(content);
-    const standardMatch = text.match(/^(?:apply|use|copy)\s+(?:the\s+)?standard\s+category\s+template\s+(?:to|onto|on)\s+(?:the\s+)?(.+?)(?:\s+category)?(?:\s+and\s+(?:its\s+)?channels?)?(?:\s+please)?[.!]?$/i);
-    if (standardMatch) return { sourceCategoryName: 'standard', targetCategoryName: standardMatch[1].trim() };
-    const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:apply|copy|use|set)\s+(?:the\s+)?same\s+permissions?\s+as\s+(?:the\s+)?(.+?)(?:\s+category)?\s+(?:to|onto|on|for)\s+(?:the\s+)?(.+?)\s+category(?:\s+and\s+(?:its\s+)?channels?)?(?:\s+please)?[.!]?$/i);
+    const categoryMatch = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:apply|set)\s+(?:the\s+)?(.+?)\s+(?:to|onto|on|for)\s+(?:the\s+)?(.+?)\s+role\s+in\s+(?:the\s+)?(.+?)\s+category(?:\s+please)?[.!]?$/i);
+    if (categoryMatch) {
+        return {
+            templateName: categoryMatch[1].trim(),
+            targetName: categoryMatch[3].trim(),
+            targetType: 'category',
+            roleName: categoryMatch[2].trim()
+        };
+    }
+    const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:apply|set)\s+(?:the\s+)?(.+?)\s+(?:to|onto|on|for)\s+(?:the\s+)?(.+?)(?:\s+(role|category))?(?:\s+please)?[.!]?$/i);
     if (!match) return null;
-    const sourceName = match[1].trim().replace(/^other\s+/i, '');
     return {
-        sourceCategoryName: /^(?:the\s+)?standard\s+category\s+template$/i.test(sourceName) ? 'standard' : sourceName,
-        targetCategoryName: match[2].trim()
+        templateName: match[1].trim(),
+        targetName: match[2].trim(),
+        targetType: match[3]?.toLowerCase() || null
     };
 }
 
-function findPermissionTemplateCategory(guild, name) {
-    const exact = findCategory(guild, name);
-    if (exact) return exact;
-    if (/gaming|standard/i.test(name)) return findGamingPermissionTemplateCategory(guild);
-    return null;
+async function applyTemplateToRole(message, role, template) {
+    const bot = getBotMember(message);
+    if (role.managed) return '❌ Discord-managed roles cannot be updated.';
+    if (role.position >= bot.roles.highest.position) return "❌ I can't update a role at or above HallKeeper's highest role.";
+    await role.setPermissions(template.permissions, `Set ${template.label} by ${message.author.tag}`);
 }
 
-function findGamingPermissionTemplateCategory(guild) {
-    for (const source of NEWS_SOURCES) {
-        const category = findCategory(guild, source.category);
-        if (category) return category;
-    }
-    return guild.channels.cache.find(channel =>
-        channel.type === ChannelType.GuildCategory && findTextChannel(guild, 'news', channel.name)
-    ) || null;
-}
-
-function getPermissionOverwrites(source, target) {
-    const guild = target.guild;
-    const botMember = guild.members.me;
-    let skipped = 0;
-    const overwrites = [...source.permissionOverwrites.cache.values()].flatMap(overwrite => {
-        if (overwrite.type !== 0) {
-            skipped++;
-            return [];
-        }
-        const role = guild.roles.cache.get(overwrite.id);
-        const isHallkeeperRole = Boolean(botMember && role?.id === botMember.roles.highest.id);
-        if (!role || role.managed || isHallkeeperRole || (role.id !== guild.id && (!botMember || role.position >= botMember.roles.highest.position))) {
-            skipped++;
-            return [];
-        }
-        const targetRole = role.id === guild.id
-            ? role
-            : role.name.toLowerCase() === source.name.toLowerCase()
-                ? guild.roles.cache.find(candidate => candidate.name.toLowerCase() === target.name.toLowerCase())
-                : role;
-        if (!targetRole) {
-            skipped++;
-            return [];
-        }
-        return [{ id: targetRole.id, type: overwrite.type, allow: overwrite.allow, deny: overwrite.deny }];
-    });
-    return { overwrites, skipped };
-}
-
-function permissionNames(value) {
-    return value && typeof value.toArray === 'function'
-        ? value.toArray()
-        : new PermissionsBitField(value || 0).toArray();
-}
-
-function permissionOverwriteOptions(overwrite) {
-    const options = {};
-    for (const permission of permissionNames(overwrite.allow)) options[permission] = true;
-    for (const permission of permissionNames(overwrite.deny)) options[permission] = false;
-    return options;
-}
-
-async function applyPermissionTemplate(target, source) {
-    const { overwrites, skipped } = getPermissionOverwrites(source, target);
-    const botRoleId = target.guild.members.me?.roles.highest.id;
-    const orderedOverwrites = [...overwrites].sort((a, b) =>
-        Number(b.id === botRoleId) - Number(a.id === botRoleId) || Number(a.id === target.guild.id) - Number(b.id === target.guild.id)
+async function applyTemplateToCategory(message, category, role, template) {
+    const permissions = Object.fromEntries(
+        Object.keys(PermissionFlagsBits).map(permission => [permission, template.permissions.includes(permission) ? true : null])
     );
-    for (const overwrite of orderedOverwrites) {
-        await target.permissionOverwrites.edit(overwrite.id, permissionOverwriteOptions(overwrite));
-    }
-    const childChannels = target.guild.channels.cache.filter(channel => channel.parentId === target.id);
-    for (const channel of childChannels.values()) {
-        for (const overwrite of orderedOverwrites) {
-            await channel.permissionOverwrites.edit(overwrite.id, permissionOverwriteOptions(overwrite));
-        }
-    }
-    return { childChannelCount: childChannels.size, skipped };
-}
-
-async function applyRolePermissionTemplate(targetCategory, sourceCategory) {
-    const guild = targetCategory.guild;
-    const sourceRole = guild.roles.cache.find(role => role.name.toLowerCase() === sourceCategory.name.toLowerCase());
-    const targetRole = guild.roles.cache.find(role => role.name.toLowerCase() === targetCategory.name.toLowerCase());
-    if (!sourceRole || !targetRole) return { copied: false, reason: 'missing-role' };
-    const bot = guild.members.me;
-    if (sourceRole.managed || targetRole.managed || sourceRole.position >= bot.roles.highest.position || targetRole.position >= bot.roles.highest.position) {
-        return { copied: false, reason: 'role-hierarchy' };
-    }
-    await targetRole.setPermissions(sourceRole.permissions, `Applied standard category template from ${sourceCategory.name}`);
-    return { copied: true };
+    await category.permissionOverwrites.edit(role.id, permissions);
+    const childChannels = message.guild.channels.cache.filter(channel => channel.parentId === category.id);
+    for (const channel of childChannels.values()) await channel.permissionOverwrites.edit(role.id, permissions);
+    return childChannels.size;
 }
 
 function parseNaturalCategoryPositionRequest(content) {
@@ -681,13 +651,6 @@ function parseNaturalCategoryVoiceLimitRequest(content) {
     const match = text.match(/^(?:in\s+)?(.+?)(?:\s*[,;:]\s*|\s+)set\s+(?:the\s+)?(?:vc|voice\s+channels?)\s+(?:user\s+)?limits?\s+to\s+(?:the\s+)?matching\s+number(?:\s+please)?[.!]?$/i);
     if (!match) return null;
     return { categoryName: match[1].trim() };
-}
-
-function parseNaturalRolePermissionCopyRequest(content) {
-    const text = normaliseNaturalRequest(content);
-    let match = text.match(/^(?:copy|clone|transfer)\s+(?:the\s+)?permissions?\s+(?:from|of)\s+(?:the\s+)?(?:role\s+)?(.+?)\s+(?:to|onto|into)\s+(?:the\s+)?(?:role\s+)?(.+?)(?:\s+please)?[.!]?$/i);
-    if (!match) match = text.match(/^(?:give|make)\s+(?:the\s+)?(?:role\s+)?(.+?)\s+(?:the\s+)?same\s+permissions?\s+as\s+(?:the\s+)?(?:role\s+)?(.+?)(?:\s+please)?[.!]?$/i);
-    return match ? { sourceRoleName: match[1].trim(), targetRoleName: match[2].trim() } : null;
 }
 
 function parseNaturalNamedVoiceLimitsRequest(content) {
@@ -888,6 +851,9 @@ function getHelpMessage() {
 • **Create a role**
   Example: \`Create a role called Moderator\`
 
+• **Set the standard permissions template on a role**
+  Example: \`Set Standard Permissions Template to Moderator role\`
+
 • **Give someone a role**
   Example: \`Give @username the Moderator role\`
 
@@ -910,6 +876,9 @@ function getHelpMessage() {
 
 
 ### 🔧 Other
+• **Apply the standard permissions template to a role in a category**
+  Example: \`Apply Standard Permissions Template to Gamer role in Battlefield category\`
+
 • **Ask HallKeeper a question**
   Example: \`@HallKeeper explain subnetting simply\`
 
@@ -936,9 +905,6 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
     }
 
     let match;
-
-    const rolePermissionCopy = parseNaturalRolePermissionCopyRequest(message.content);
-    if (rolePermissionCopy) return await naturalCopyRolePermissions(message, rolePermissionCopy.sourceRoleName, rolePermissionCopy.targetRoleName);
 
     const namedVoiceLimits = parseNaturalNamedVoiceLimitsRequest(message.content);
     if (namedVoiceLimits) {
@@ -1021,24 +987,34 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
         return true;
     }
 
-    const permissionCopy = parseNaturalPermissionCopyRequest(message.content);
-    if (permissionCopy) {
+    const permissionApply = parseNaturalPermissionApplyRequest(message.content);
+    if (permissionApply) {
+        const template = findPermissionTemplate(permissionApply.templateName);
+        if (!template) {
+            await message.reply(`❌ I couldn't find a permission template called **${permissionApply.templateName}**. Available templates: ${Object.values(PERMISSION_TEMPLATES).map(item => item.label).join(', ')}.`);
+            return true;
+        }
         if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
-        if (!await ensureGuildPermission(message, 'ManageRoles', 'Manage Roles')) return true;
-        const source = findPermissionTemplateCategory(message.guild, permissionCopy.sourceCategoryName);
-        const target = findCategory(message.guild, permissionCopy.targetCategoryName);
-        if (!source) { await message.reply(`❌ I couldn't find a permission template category matching **${permissionCopy.sourceCategoryName}**.`); return true; }
-        if (!target) { await message.reply(`❌ I couldn't find a category called **${permissionCopy.targetCategoryName}**.`); return true; }
-        if (source.id === target.id) { await message.reply('❌ The source and target categories must be different.'); return true; }
+        const roleName = permissionApply.roleName || (permissionApply.targetType === 'role' ? permissionApply.targetName : null);
+        const role = roleName && message.guild.roles.cache.find(candidate => candidate.name.toLowerCase() === roleName.toLowerCase());
+        const category = findCategory(message.guild, permissionApply.targetName);
+        const targetType = permissionApply.targetType || (category ? 'category' : 'role');
+        if (targetType === 'category' && !category) { await message.reply(`❌ I couldn't find a category called **${permissionApply.targetName}**.`); return true; }
+        if (targetType === 'category' && !permissionApply.roleName) { await message.reply('❌ Please include the role, for example: `Apply Standard Permissions Template to Gamer role in Battlefield category`.'); return true; }
+        if (targetType === 'category' && !role) { await message.reply(`❌ I couldn't find a role called **${permissionApply.roleName}**.`); return true; }
+        if (targetType === 'role' && !role) { await message.reply(`❌ I couldn't find a role called **${permissionApply.targetName}**.`); return true; }
         try {
-            const roleResult = await applyRolePermissionTemplate(target, source);
-            const result = await applyPermissionTemplate(target, source);
-            const skippedNote = result.skipped ? ` Skipped ${result.skipped} overwrite${result.skipped === 1 ? '' : 's'} the bot cannot manage.` : '';
-            const roleNote = roleResult.copied ? ' Matching role permissions copied.' : ' Matching role permissions were not changed because the source or target role is missing or not manageable.';
-            const templateLabel = permissionCopy.sourceCategoryName === 'standard' ? 'the standard category template' : `**${source.name}**`;
-            await message.reply(`✅ Applied ${templateLabel} to **${target.name}** and its ${result.childChannelCount} child channel${result.childChannelCount === 1 ? '' : 's'}.${roleNote}${skippedNote}`);
+            if (targetType === 'role') {
+                if (!await ensureGuildPermission(message, 'ManageRoles', 'Manage Roles')) return true;
+                const errorMessage = await applyTemplateToRole(message, role, template);
+                if (errorMessage) { await message.reply(errorMessage); return true; }
+                await message.reply(`✅ Set the ${template.label} on **${role.name}**.`);
+            } else {
+                const childChannelCount = await applyTemplateToCategory(message, category, role, template);
+                await message.reply(`✅ Applied the ${template.label} to **${category.name}** and its ${childChannelCount} child channel${childChannelCount === 1 ? '' : 's'}.`);
+            }
         } catch (error) {
-            console.error('Natural copy permissions error:', error);
+            console.error('Natural permission apply error:', error);
             await message.reply("❌ I couldn't apply those permissions. Check my permissions and role hierarchy.");
         }
         return true;
@@ -1051,8 +1027,6 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
             let category = findCategory(message.guild, layout.categoryName);
             const categoryWasCreated = !category;
             if (categoryWasCreated) category = await message.guild.channels.create({ name: layout.categoryName, type: ChannelType.GuildCategory });
-            const permissionTemplate = categoryWasCreated ? findGamingPermissionTemplateCategory(message.guild) : null;
-            if (permissionTemplate) await applyPermissionTemplate(category, permissionTemplate);
             for (const channelName of layout.textChannels) {
                 const name = channelName.toLowerCase().replace(/\s+/g, '-');
                 const existing = message.guild.channels.cache.find(channel => channel.parentId === category.id && channel.type === ChannelType.GuildText && channel.name.toLowerCase() === name);
@@ -1073,11 +1047,7 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
                     });
                 }
             }
-            if (permissionTemplate) await applyPermissionTemplate(category, permissionTemplate);
-            const templateNote = categoryWasCreated && permissionTemplate
-                ? ` Permissions copied from **${permissionTemplate.name}**.`
-                : categoryWasCreated ? ' No gaming permission template was found.' : '';
-            await message.reply(`✅ Created or updated **${category.name}** with the requested text and voice channels.${templateNote}`);
+            await message.reply(`✅ Created or updated **${category.name}** with the requested text and voice channels. Use "apply Standard Permissions Template to Gamer role in ${category.name} category" when you want to set its permissions.`);
         } catch (error) {
             console.error('Natural create channel layout error:', error);
             await message.reply("❌ I couldn't create that channel layout. Check my permissions.");
@@ -1497,29 +1467,6 @@ async function naturalCreateRole(message, roleName) {
     } catch (error) {
         console.error('Create role error:', error);
         await message.reply("❌ I couldn't create that role. Check my permissions.");
-    }
-    return true;
-}
-
-async function naturalCopyRolePermissions(message, sourceRoleName, targetRoleName) {
-    if (!await ensureGuildPermission(message, 'ManageRoles', 'Manage Roles')) return true;
-    const source = message.guild.roles.cache.find(role => role.name.toLowerCase() === sourceRoleName.toLowerCase());
-    const target = message.guild.roles.cache.find(role => role.name.toLowerCase() === targetRoleName.toLowerCase());
-    if (!source) { await message.reply(`❌ I couldn't find a role called **${sourceRoleName}**.`); return true; }
-    if (!target) { await message.reply(`❌ I couldn't find a role called **${targetRoleName}**.`); return true; }
-    if (source.id === target.id) { await message.reply('❌ The source and target roles must be different.'); return true; }
-    const bot = getBotMember(message);
-    if (source.managed || target.managed) { await message.reply("❌ I can't copy permissions to or from a role managed by Discord."); return true; }
-    if (source.position >= bot.roles.highest.position || target.position >= bot.roles.highest.position) {
-        await message.reply("❌ I can't copy those permissions because one of the roles is at or above HallKeeper's highest role.");
-        return true;
-    }
-    try {
-        await target.setPermissions(source.permissions, `Copied permissions from ${source.name} by ${message.author.tag}`);
-        await message.reply(`✅ Copied the permissions from **${source.name}** to **${target.name}**.`);
-    } catch (error) {
-        console.error('Copy role permissions error:', error);
-        await message.reply("❌ I couldn't copy those role permissions. Check Manage Roles and the role hierarchy.");
     }
     return true;
 }
