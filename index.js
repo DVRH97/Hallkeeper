@@ -558,26 +558,60 @@ function splitNaturalChannelNames(value) {
 
 function parseNaturalChannelLayout(content) {
     const text = normaliseNaturalRequest(content);
-    const categoryMatch = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:create|make|add|set\s+up)\s+(?:a\s+)?(?:new\s+)?(.+?)\s+category\s+with\s+(.+)$/i);
+    const commandStart = /^(?:can\s+you\s+)?(?:please\s+)?(?:create|make|add|set\s+up|organize|organise)\s+(?:(?:a|an|the|new)\s+)?/i;
+    const body = text.replace(commandStart, '');
+    const categoryMatch = body.match(/^(.+?)\s+category\s+(?:with|containing)\s+(.+)$/i)
+        || body.match(/^category\s+(?:called|named)\s+(.+?)\s+(?:with|containing)\s+(.+)$/i)
+        || body.match(/^category\s+(.+?)\s+(?:with|containing)\s+(.+)$/i)
+        || body.match(/^(.+?)\s+category\s+(?:called|named)\s+(.+)$/i);
     if (!categoryMatch) return null;
     const categoryName = categoryMatch[1].trim();
     let remainder = categoryMatch[2].trim();
     const correspondingLimitRequested = /set\s+(?:the\s+)?user\s+limit\s+(?:per\s+channel\s+)?to\s+the\s+corresponding\s+number/i.test(remainder);
     remainder = remainder.replace(/\s*(?:[.!]?\s+and\s+)?set\s+(?:the\s+)?user\s+limit\s+(?:per\s+channel\s+)?to\s+the\s+corresponding\s+number[.!]?\s*$/i, '').trim();
-    const voiceMatch = remainder.match(/^(.*?)(?:[.!]?\s+and\s+)?(\d+)\s+voice\s+channels?\s+(?:called|named)\s+(.+?)[.!]?$/i);
+    remainder = remainder.replace(/VC\s+(\d+)\s+(?:through|to)\s+VC\s+(\d+)\s+(.+?)\s+voice\s+channels?$/i, (_, first, last, label) => {
+        return `${last - first + 1} voice channels named VC ${first}-${last} ${label}`;
+    });
+    const explicitVoiceNames = [...remainder.matchAll(/\bVC\s+\d+\s+[A-Za-z][A-Za-z0-9_-]*/gi)].map(match => match[0].trim());
+    if (explicitVoiceNames.length >= 2) {
+        const firstVoiceIndex = remainder.search(/\bVC\s+\d+\s+[A-Za-z][A-Za-z0-9_-]*/i);
+        const possibleTextPart = remainder.slice(0, firstVoiceIndex);
+        const textChannelPart = possibleTextPart
+            .replace(/^(?:the\s+)?following\s+text\s+channels?\s*[:;,.]?\s*/i, '')
+            .replace(/(?:text\s+channels?|following)\s*[:;,.]?\s*$/i, '')
+            .replace(/(?:and|plus|then)\s+(?:voice\s+channels?)?\s*[:;,.]?\s*$/i, '')
+            .replace(/[:;,.]\s*$/g, '')
+            .trim();
+        const textChannels = splitNaturalChannelNames(textChannelPart.replace(/\s+text\s+channels?\s*$/i, ''));
+        if (textChannels.length > 0) {
+            return {
+                categoryName,
+                textChannels,
+                voiceChannels: explicitVoiceNames.map(name => ({
+                    name,
+                    userLimit: correspondingLimitRequested ? Number(name.match(/\d+/)?.[0]) : null
+                }))
+            };
+        }
+    }
+    const numberWords = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+    const voiceMatch = remainder.match(/^(.*?)(?:[,.!?]?\s+(?:and|plus|then)(?:\s+(?:(?:also|add|have|with)\s+)*))(\d+|one|two|three|four|five)\s+voice\s+channels?\s*(?:(?:called|named)\s+)?(.+?)[.!]?$/i);
     let textChannelPart = remainder;
     let voiceChannels = [];
     if (voiceMatch) {
         textChannelPart = voiceMatch[1].trim().replace(/[.!]+$/, '').trim();
-        const count = Number.parseInt(voiceMatch[2], 10);
+        const count = numberWords[voiceMatch[2].toLowerCase()] || Number.parseInt(voiceMatch[2], 10);
         const voiceName = voiceMatch[3].trim().replace(/^['"`]|['"`]$/g, '');
+        const prefixedRange = voiceName.match(/^(.+?)\s+(\d+)\s*(?:[-–]|through|to)\s*(?:\1\s+)?(\d+)\s+(.+)$/i);
         const range = voiceName.match(/^(\d+)\s*[-–]\s*(\d+)\s+(.+)$/);
-        if (range) {
-            const first = Number.parseInt(range[1], 10);
-            const last = Number.parseInt(range[2], 10);
+        if (prefixedRange || range) {
+            const prefix = prefixedRange ? prefixedRange[1].trim() : '';
+            const first = Number.parseInt((prefixedRange || range)[prefixedRange ? 2 : 1], 10);
+            const last = Number.parseInt((prefixedRange || range)[prefixedRange ? 3 : 2], 10);
+            const label = (prefixedRange || range)[prefixedRange ? 4 : 3].trim();
             if (last >= first && last - first + 1 <= 50) {
                 voiceChannels = Array.from({ length: last - first + 1 }, (_, offset) => ({
-                    name: `${first + offset} ${range[3].trim()}`,
+                    name: `${prefix ? `${prefix} ` : ''}${first + offset} ${label}`,
                     userLimit: correspondingLimitRequested ? first + offset : null
                 }));
             }
@@ -1047,7 +1081,7 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
                     });
                 }
             }
-            await message.reply(`✅ Created or updated **${category.name}** with the requested text and voice channels. Use "apply Standard Permissions Template to Gamer role in ${category.name} category" when you want to set its permissions.`);
+            await message.reply(`✅ Created or updated **${category.name}** with the requested text and voice channels. Use "apply Standard Permissions Template to X role in X category" when you want to set its permissions.`);
         } catch (error) {
             console.error('Natural create channel layout error:', error);
             await message.reply("❌ I couldn't create that channel layout. Check my permissions.");
