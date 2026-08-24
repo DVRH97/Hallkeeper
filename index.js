@@ -636,6 +636,16 @@ function parseNaturalPermissionApplyRequest(content) {
             roleName: categoryMatch[2].trim()
         };
     }
+    const roleCategoryMatch = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:apply|add|assign|link|associate|put|place|set)\s+(?:the\s+)?(.+?)\s+role\s+(?:to|onto|on|in)\s+(?:the\s+)?(.+?)\s+category(?:\s+please)?[.!]?$/i)
+        || text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:give|grant|allow|provide|enable)\s+(?:the\s+)?(.+?)\s+role\s+(?:access|permissions?)\s+(?:to|onto|on|in|for)\s+(?:the\s+)?(.+?)\s+category(?:\s+please)?[.!]?$/i);
+    if (roleCategoryMatch) {
+        return {
+            action: 'role-category',
+            roleName: roleCategoryMatch[1].trim(),
+            targetName: roleCategoryMatch[2].trim(),
+            targetType: 'category'
+        };
+    }
     const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:apply|set)\s+(?:the\s+)?(.+?)\s+(?:to|onto|on|for)\s+(?:the\s+)?(.+?)(?:\s+(role|category))?(?:\s+please)?[.!]?$/i);
     if (!match) return null;
     return {
@@ -660,6 +670,10 @@ async function applyTemplateToCategory(message, category, role, template) {
     const childChannels = message.guild.channels.cache.filter(channel => channel.parentId === category.id);
     for (const channel of childChannels.values()) await channel.permissionOverwrites.edit(role.id, permissions);
     return childChannels.size;
+}
+
+async function applyRoleToCategory(category, role) {
+    await category.permissionOverwrites.edit(role.id, { ViewChannel: true });
 }
 
 function parseNaturalCategoryPositionRequest(content) {
@@ -910,6 +924,11 @@ function getHelpMessage() {
 
 
 ### 🔧 Other
+• **Associate a role with a category**
+  Examples: \`Apply the Apex Legends role to the Apex Legends category\`,
+  \`Give the Apex Legends role access to the Apex Legends category\`, or
+  \`Add the Apex Legends role to the Apex Legends category\`
+
 • **Apply the standard permissions template to a role in a category**
   Example: \`Apply Standard Permissions Template to X role in X category\`
 
@@ -1023,6 +1042,21 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
 
     const permissionApply = parseNaturalPermissionApplyRequest(message.content);
     if (permissionApply) {
+        if (permissionApply.action === 'role-category') {
+            if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
+            const role = message.guild.roles.cache.find(candidate => candidate.name.toLowerCase() === permissionApply.roleName.toLowerCase());
+            const category = findCategory(message.guild, permissionApply.targetName);
+            if (!role) { await message.reply(`❌ I couldn't find a role called **${permissionApply.roleName}**.`); return true; }
+            if (!category) { await message.reply(`❌ I couldn't find a category called **${permissionApply.targetName}**.`); return true; }
+            try {
+                await applyRoleToCategory(category, role);
+                await message.reply(`✅ Associated the **${role.name}** role with **${category.name}** and enabled View Channel access. Other category permissions were left unchanged.`);
+            } catch (error) {
+                console.error('Role-to-category association error:', error);
+                await message.reply("❌ I couldn't associate that role with the category. Check my permissions.");
+            }
+            return true;
+        }
         const template = findPermissionTemplate(permissionApply.templateName);
         if (!template) {
             await message.reply(`❌ I couldn't find a permission template called **${permissionApply.templateName}**. Available templates: ${Object.values(PERMISSION_TEMPLATES).map(item => item.label).join(', ')}.`);
