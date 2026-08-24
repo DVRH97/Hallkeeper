@@ -33,6 +33,7 @@ const AI_RATE_LIMIT_WINDOW_MS = boundedInteger(process.env.AI_RATE_LIMIT_WINDOW_
 const AI_CONVERSATION_TIMEOUT_MS = boundedInteger(process.env.AI_CONVERSATION_TIMEOUT_MINUTES, 3, 1, 60) * 60 * 1000;
 const AI_CONVERSATION_MAX_TURNS = boundedInteger(process.env.AI_CONVERSATION_MAX_TURNS, 4, 1, 10);
 const AI_CHANNEL_IDS = new Set((process.env.AI_CHANNEL_IDS || '').split(',').map(id => id.trim()).filter(Boolean));
+const CLEAR_TIMEZONE = process.env.CLEAR_TIMEZONE || 'UTC';
 const aiRequestTimes = new Map();
 const aiConversations = new Map();
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
@@ -426,6 +427,53 @@ async function checkChannelPermissions(channel, member) {
     };
 }
 
+function getZonedDateParts(date, timeZone) {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(date);
+    return Object.fromEntries(parts.filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
+}
+
+function zonedDateTimeToDate({ year, month, day, hour = 0, minute = 0, second = 0 }, timeZone) {
+    const utcGuess = Date.UTC(year, month - 1, day, hour, minute, second);
+    const localParts = getZonedDateParts(new Date(utcGuess), timeZone);
+    const localAsUtc = Date.UTC(localParts.year, localParts.month - 1, localParts.day, localParts.hour, localParts.minute, localParts.second);
+    return new Date(utcGuess - (localAsUtc - utcGuess));
+}
+
+function parseClockTime(value) {
+    const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (hour > 23 || minute > 59) return null;
+    return { hour, minute };
+}
+
+function parseClearTimeRequest(text, now = new Date(), timeZone = CLEAR_TIMEZONE) {
+    const normalised = text.trim().toLowerCase().replace(/\s+/g, ' ');
+    const todayMatch = normalised.match(/^(?:clear|delete|remove|purge) (?:all )?(?:the )?messages? from today$/);
+    const todayRangeMatch = normalised.match(/^(?:clear|delete|remove|purge) (?:all )?(?:the )?messages? from today between (\d{1,2}:\d{2}) and (\d{1,2}:\d{2})$/);
+    const clockRangeMatch = normalised.match(/^(?:clear|delete|remove|purge) (?:all )?(?:the )?messages? from (\d{1,2}:\d{2}) to (\d{1,2}:\d{2})$/);
+    const relativeMatch = normalised.match(/^(?:clear|delete|remove|purge) (?:all )?(?:the )?messages? from the last (\d+(?:\.\d+)?) (minutes?|hours?)$/);
+    if (!todayMatch && !todayRangeMatch && !clockRangeMatch && !relativeMatch) return null;
+    if (relativeMatch) {
+        const amount = Number(relativeMatch[1]);
+        const minutes = relativeMatch[2].startsWith('hour') ? amount * 60 : amount;
+        return { start: new Date(now.getTime() - minutes * 60 * 1000), end: now, label: `the last ${relativeMatch[1]} ${relativeMatch[2]}` };
+    }
+    const zonedNow = getZonedDateParts(now, timeZone);
+    const dayStart = zonedDateTimeToDate({ year: zonedNow.year, month: zonedNow.month, day: zonedNow.day }, timeZone);
+    const nextDay = new Date(Date.UTC(zonedNow.year, zonedNow.month - 1, zonedNow.day) + 24 * 60 * 60 * 1000);
+    const dayEnd = zonedDateTimeToDate({ year: nextDay.getUTCFullYear(), month: nextDay.getUTCMonth() + 1, day: nextDay.getUTCDate() }, timeZone);
+    if (todayMatch) return { start: dayStart, end: dayEnd, label: 'today' };
+    const startClock = parseClockTime((todayRangeMatch || clockRangeMatch)[1]);
+    const endClock = parseClockTime((todayRangeMatch || clockRangeMatch)[2]);
+    if (!startClock || !endClock) return null;
+    const start = zonedDateTimeToDate({ ...zonedNow, ...startClock }, timeZone);
+    const end = zonedDateTimeToDate({ ...zonedNow, ...endClock }, timeZone);
+    if (end <= start) return { error: 'The end time must be later than the start time.' };
+    return { start, end, label: `between ${String(startClock.hour).padStart(2, '0')}:${String(startClock.minute).padStart(2, '0')} and ${String(endClock.hour).padStart(2, '0')}:${String(endClock.minute).padStart(2, '0')}` };
+}
+
 async function clearMessages(channel, amount) {
     const messages = await channel.messages.fetch({
         limit: Math.min(amount + 1, 100)
@@ -438,6 +486,19 @@ async function clearMessages(channel, amount) {
     if (deletable.size === 0) return 0;
     const deleted = await channel.bulkDelete(deletable, true);
     return deleted.size;
+}
+
+async function clearMessagesInRange(channel, range) {
+    let totalDeleted = 0;
+    while (true) {
+        const messages = await channel.messages.fetch({ limit: 100 });
+        const inRange = messages.filter(msg => msg.createdTimestamp >= range.start.getTime() && msg.createdTimestamp < range.end.getTime());
+        const deletable = inRange.filter(msg => Date.now() - msg.createdTimestamp < 14 * 24 * 60 * 60 * 1000);
+        if (deletable.size > 0) totalDeleted += (await channel.bulkDelete(deletable, true)).size;
+        const oldest = messages.last();
+        if (!oldest || oldest.createdTimestamp < range.start.getTime() || messages.size < 100) break;
+    }
+    return totalDeleted;
 }
 
 async function clearAllMessages(channel) {
@@ -1221,6 +1282,9 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
     match = text.match(/^(?:clear|delete|remove|purge)\s+(?:the\s+)?(?:last\s+)?(\d+)\s+messages?(?:\s+please)?$/i);
     if (match) return await naturalClear(message, parseInt(match[1], 10));
 
+    const timeRange = parseClearTimeRequest(text.replace(/\s+please$/i, ''));
+    if (timeRange) return await naturalClearRange(message, timeRange);
+
     if (/^(?:clear|delete|purge)\s+(?:the\s+)?(?:entire\s+|all\s+(?:the\s+)?)?(?:chat|channel|messages)(?:\s+please)?$/i.test(text)) {
         return await naturalClearAll(message);
     }
@@ -1452,6 +1516,27 @@ async function naturalClear(message, amount) {
         await message.channel.send(`✅ Cleared **${deleted} messages**.`).then(msg => setTimeout(() => msg.delete().catch(() => {}), 5000));
     } catch (error) {
         console.error('Clear error:', error);
+        await message.reply("❌ I couldn't clear the messages.");
+    }
+    return true;
+}
+
+async function naturalClearRange(message, range) {
+    if (range.error) {
+        await message.reply(`❌ ${range.error}`);
+        return true;
+    }
+    const bot = getBotMember(message);
+    if (!bot.permissionsIn(message.channel).has('ManageMessages')) {
+        await message.reply("❌ HallKeeper doesn't have the **Manage Messages** permission in this channel.");
+        return true;
+    }
+    try {
+        const deleted = await clearMessagesInRange(message.channel, range);
+        const result = await message.channel.send(`✅ Cleared **${deleted} messages** from ${range.label}.`);
+        setTimeout(() => result.delete().catch(() => {}), 5000);
+    } catch (error) {
+        console.error('Clear time range error:', error);
         await message.reply("❌ I couldn't clear the messages.");
     }
     return true;
@@ -2010,4 +2095,13 @@ discord.on('messageCreate', async message => {
     }
 });
 
-discord.login(process.env.DISCORD_TOKEN);
+if (require.main === module) {
+    discord.login(process.env.DISCORD_TOKEN);
+}
+
+module.exports = {
+    getZonedDateParts,
+    parseClearTimeRequest,
+    parseClockTime,
+    zonedDateTimeToDate
+};

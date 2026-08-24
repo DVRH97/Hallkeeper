@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --check index.js",
+    "test": "node --test clear-messages.test.js && node --check index.js",
     "start": "node index.js"
   },
   "keywords": [],
