@@ -911,7 +911,7 @@ function getHelpMessage() {
 
 ### 🔧 Other
 • **Apply the standard permissions template to a role in a category**
-  Example: \`Apply Standard Permissions Template to Gamer role in Battlefield category\`
+  Example: \`Apply Standard Permissions Template to X role in X category\`
 
 • **Ask HallKeeper a question**
   Example: \`@HallKeeper explain subnetting simply\`
@@ -1034,7 +1034,7 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
         const category = findCategory(message.guild, permissionApply.targetName);
         const targetType = permissionApply.targetType || (category ? 'category' : 'role');
         if (targetType === 'category' && !category) { await message.reply(`❌ I couldn't find a category called **${permissionApply.targetName}**.`); return true; }
-        if (targetType === 'category' && !permissionApply.roleName) { await message.reply('❌ Please include the role, for example: `Apply Standard Permissions Template to Gamer role in Battlefield category`.'); return true; }
+        if (targetType === 'category' && !permissionApply.roleName) { await message.reply('❌ Please include the role, for example: `Apply Standard Permissions Template to X role in X category`.'); return true; }
         if (targetType === 'category' && !role) { await message.reply(`❌ I couldn't find a role called **${permissionApply.roleName}**.`); return true; }
         if (targetType === 'role' && !role) { await message.reply(`❌ I couldn't find a role called **${permissionApply.targetName}**.`); return true; }
         try {
