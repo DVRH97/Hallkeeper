@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseClearTimeRequest } = require('./index');
+const { parseClearTimeRequest, parseNaturalChannelLayout } = require('./index');
 
 const now = new Date('2026-08-23T12:00:00.000Z');
 
@@ -27,4 +27,15 @@ test('parses relative hour and minute ranges', () => {
 test('rejects reversed ranges and unrelated requests', () => {
     assert.equal(parseClearTimeRequest('clear messages from 18:00 to 09:00', now, 'UTC').error, 'The end time must be later than the start time.');
     assert.equal(parseClearTimeRequest('clear the last 20 messages', now, 'UTC'), null);
+});
+
+test('parses a numbered voice-only request with a category and named range', () => {
+    const layout = parseNaturalChannelLayout('1. create 3 voice channels in Apex Legends category called "Duo 1-3"');
+    assert.equal(layout.categoryName, 'Apex Legends');
+    assert.deepEqual(layout.textChannels, []);
+    assert.deepEqual(layout.voiceChannels, [
+        { name: 'Duo 1', userLimit: null },
+        { name: 'Duo 2', userLimit: null },
+        { name: 'Duo 3', userLimit: null }
+    ]);
 });

@@ -570,11 +570,37 @@ async function ensureChannelPermission(message, channel, permission, label) {
 function normaliseNaturalRequest(content) {
     return content
         .trim()
+        .replace(/^\d+[.)]\s*/, '')
         .replace(/^(?:can|could|would|will)\s+you\s+(?:please\s+)?/i, '')
         .replace(/^please\s+/i, '')
         .replace(/^(?:hey|hi|hello)\s+(?:hall\s*keeper|hallkeeper)[,!:\s]*/i, '')
         .replace(/^(?:hall\s*keeper|hallkeeper)[,!:\s]*/i, '')
         .trim();
+}
+
+function expandNaturalVoiceNames(countToken, rawName, userLimitByNumber = false) {
+    const numberWords = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+    const count = numberWords[String(countToken).toLowerCase()] || Number.parseInt(countToken, 10);
+    const voiceName = rawName.trim().replace(/^['"`]|['"`]$/g, '');
+    const prefixedRange = voiceName.match(/^(.+?)\s+(\d+)\s*(?:[-–]|through|to)\s*(\d+)(?:\s+(.+))?$/i);
+    const range = voiceName.match(/^(\d+)\s*[-–]\s*(\d+)(?:\s+(.+))?$/i);
+    const matchedRange = prefixedRange || range;
+    if (matchedRange) {
+        const prefix = prefixedRange ? matchedRange[1].trim() : '';
+        const first = Number.parseInt(matchedRange[prefixedRange ? 2 : 1], 10);
+        const last = Number.parseInt(matchedRange[prefixedRange ? 3 : 2], 10);
+        const label = (matchedRange[prefixedRange ? 4 : 3] || '').trim();
+        if (last >= first && last - first + 1 <= 50) {
+            return Array.from({ length: last - first + 1 }, (_, offset) => ({
+                name: `${prefix ? `${prefix} ` : ''}${first + offset}${label ? ` ${label}` : ''}`,
+                userLimit: userLimitByNumber ? first + offset : null
+            }));
+        }
+    }
+    return Array.from({ length: Math.min(count, 50) }, (_, index) => ({
+        name: `${index + 1} ${voiceName}`,
+        userLimit: userLimitByNumber ? index + 1 : null
+    }));
 }
 
 const naturalIntentHistory = new Map();
@@ -621,6 +647,14 @@ function parseNaturalChannelLayout(content) {
     const text = normaliseNaturalRequest(content);
     const commandStart = /^(?:can\s+you\s+)?(?:please\s+)?(?:create|make|add|set\s+up|organize|organise)\s+(?:(?:a|an|the|new)\s+)?/i;
     const body = text.replace(commandStart, '');
+    const voiceOnlyMatch = body.match(/^(\d+|one|two|three|four|five)\s+voice\s+channels?\s+in\s+(?:the\s+)?(.+?)\s+category\s+(?:called|named)\s+(.+?)[.!]?$/i);
+    if (voiceOnlyMatch) {
+        return {
+            categoryName: voiceOnlyMatch[2].trim(),
+            textChannels: [],
+            voiceChannels: expandNaturalVoiceNames(voiceOnlyMatch[1], voiceOnlyMatch[3])
+        };
+    }
     const categoryMatch = body.match(/^(.+?)\s+category\s+(?:with|containing)\s+(.+)$/i)
         || body.match(/^category\s+(?:called|named)\s+(.+?)\s+(?:with|containing)\s+(.+)$/i)
         || body.match(/^category\s+(.+?)\s+(?:with|containing)\s+(.+)$/i)
@@ -655,32 +689,12 @@ function parseNaturalChannelLayout(content) {
             };
         }
     }
-    const numberWords = { one: 1, two: 2, three: 3, four: 4, five: 5 };
     const voiceMatch = remainder.match(/^(.*?)(?:[,.!?]?\s+(?:and|plus|then)(?:\s+(?:(?:also|add|have|with)\s+)*))(\d+|one|two|three|four|five)\s+voice\s+channels?\s*(?:(?:called|named)\s+)?(.+?)[.!]?$/i);
     let textChannelPart = remainder;
     let voiceChannels = [];
     if (voiceMatch) {
         textChannelPart = voiceMatch[1].trim().replace(/[.!]+$/, '').trim();
-        const count = numberWords[voiceMatch[2].toLowerCase()] || Number.parseInt(voiceMatch[2], 10);
-        const voiceName = voiceMatch[3].trim().replace(/^['"`]|['"`]$/g, '');
-        const prefixedRange = voiceName.match(/^(.+?)\s+(\d+)\s*(?:[-–]|through|to)\s*(?:\1\s+)?(\d+)\s+(.+)$/i);
-        const range = voiceName.match(/^(\d+)\s*[-–]\s*(\d+)\s+(.+)$/);
-        if (prefixedRange || range) {
-            const prefix = prefixedRange ? prefixedRange[1].trim() : '';
-            const first = Number.parseInt((prefixedRange || range)[prefixedRange ? 2 : 1], 10);
-            const last = Number.parseInt((prefixedRange || range)[prefixedRange ? 3 : 2], 10);
-            const label = (prefixedRange || range)[prefixedRange ? 4 : 3].trim();
-            if (last >= first && last - first + 1 <= 50) {
-                voiceChannels = Array.from({ length: last - first + 1 }, (_, offset) => ({
-                    name: `${prefix ? `${prefix} ` : ''}${first + offset} ${label}`,
-                    userLimit: correspondingLimitRequested ? first + offset : null
-                }));
-            }
-        }
-        if (voiceChannels.length === 0) voiceChannels = Array.from({ length: Math.min(count, 50) }, (_, index) => ({
-            name: `${index + 1} ${voiceName}`,
-            userLimit: correspondingLimitRequested ? index + 1 : null
-        }));
+        voiceChannels = expandNaturalVoiceNames(voiceMatch[2], voiceMatch[3], correspondingLimitRequested);
     }
     const textChannels = splitNaturalChannelNames(textChannelPart.replace(/\s+text\s+channels?\s*$/i, ''));
     return textChannels.length && voiceChannels.length ? { categoryName, textChannels, voiceChannels } : null;
@@ -2103,5 +2117,6 @@ module.exports = {
     getZonedDateParts,
     parseClearTimeRequest,
     parseClockTime,
-    zonedDateTimeToDate
+    zonedDateTimeToDate,
+    parseNaturalChannelLayout
 };
