@@ -49,7 +49,9 @@ const NEWS_SOURCES = [
     { key: 'big-walk', category: 'Big Walk', label: 'Big Walk', type: 'steam', appId: 1478500 },
     { key: 'pokemmo', category: 'POKEMMO', label: 'PokeMMO', type: 'rss', url: 'https://forums.pokemmo.com/index.php?/rss/1-updates-announcements.xml/' },
     { key: 'valorant', category: 'Valorant', label: 'VALORANT', type: 'valorant' },
-    { key: 'destiny', category: 'Destiny', label: 'Destiny 2', type: 'steam', appId: 1085660 }
+    { key: 'destiny', category: 'Destiny', label: 'Destiny 2', type: 'steam', appId: 1085660 },
+    { key: 'apex-legends', category: 'Apex Legends', label: 'Apex Legends', type: 'steam', appId: 1172470 },
+    { key: 'battlefield', category: 'Battlefield', label: 'Battlefield', type: 'steam', appId: 2807960 }
 ];
 
 // Named permission templates. Add future templates here without changing the
