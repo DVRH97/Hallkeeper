@@ -391,28 +391,41 @@ function findTextChannel(guild, name, categoryName = null) {
 }
 
 async function findMember(guild, input) {
+    const mentionMatch = input.match(/^<@!?(\d+)>$/);
+    const idMatch = input.match(/^\d+$/);
+    const directId = mentionMatch?.[1] || idMatch?.[0];
+
+    if (directId) {
+        try {
+            const member = await guild.members.fetch(directId);
+            return { member, count: guild.memberCount };
+        } catch (_) {
+            return { member: null, count: guild.memberCount };
+        }
+    }
+
+    const searchName = input
+        .replace(/^<@!?/, '')
+        .replace(/>$/, '')
+        .trim()
+        .toLowerCase();
+
+    let member = guild.members.cache.find(m =>
+        m.user.username.toLowerCase() === searchName ||
+        m.displayName.toLowerCase() === searchName ||
+        m.user.tag.toLowerCase() === searchName
+    );
+
+    if (member) return { member, count: guild.memberCount };
+
     const members = await guild.members.fetch();
     console.log(`👥 Server members loaded: ${members.size}`);
 
-    let member = null;
-    const mentionMatch = input.match(/^<@!?(\d+)>$/);
-
-    if (mentionMatch) member = members.get(mentionMatch[1]);
-    if (!member && /^\d+$/.test(input)) member = members.get(input);
-
-    if (!member) {
-        const searchName = input
-            .replace(/^<@!?/, '')
-            .replace(/>$/, '')
-            .trim()
-            .toLowerCase();
-
-        member = members.find(m =>
-            m.user.username.toLowerCase() === searchName ||
-            m.displayName.toLowerCase() === searchName ||
-            m.user.tag.toLowerCase() === searchName
-        );
-    }
+    member = members.find(m =>
+        m.user.username.toLowerCase() === searchName ||
+        m.displayName.toLowerCase() === searchName ||
+        m.user.tag.toLowerCase() === searchName
+    );
 
     return { member, count: members.size };
 }
