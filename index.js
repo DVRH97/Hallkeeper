@@ -1531,13 +1531,18 @@ async function naturalUnmute(message, input) {
         // null for communication_disabled_until, which removes a timeout.
         // Calling timeout(null) is intended to do the same, but making the
         // payload explicit avoids clients/API wrappers treating null as absent.
-        await member.edit({
-            communicationDisabledUntil: null,
-            reason: `Unmuted by ${message.author.tag} using HallKeeper`
-        });
+        await member.disableCommunicationUntil(
+            null,
+            `Unmuted by ${message.author.tag} using HallKeeper`
+        );
         await message.reply(`🔊 **${member.user.tag}** has been unmuted.`);
     } catch (error) {
-        console.error('Unmute error:', error);
+        console.error('Unmute error:', {
+            status: error?.status,
+            code: error?.code,
+            message: error?.message,
+            rawError: error?.rawError
+        });
         const status = error?.status ?? error?.code;
         if (status === 403) {
             await message.reply("❌ I couldn't unmute that member because HallKeeper lacks permission or is below the member's highest role.");
@@ -2106,10 +2111,15 @@ discord.once('clientReady', async () => {
     console.log(`Official news relay is active; checking every ${NEWS_POLL_INTERVAL_MS / 60000} minute(s).`);
 });
 
+const handledMessageIds = new Set();
+
 discord.on('messageCreate', async message => {
     console.log(`MESSAGE RECEIVED: ${message.author.tag}: ${message.content}`);
 
     if (message.author.bot || !message.guild) return;
+    if (handledMessageIds.has(message.id)) return;
+    handledMessageIds.add(message.id);
+    setTimeout(() => handledMessageIds.delete(message.id), 10 * 60 * 1000).unref();
 
     if (await handleAiMessage(message)) return;
 
