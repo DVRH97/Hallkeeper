@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseClearTimeRequest, parseNaturalChannelLayout, parseNaturalChannelPositionRequest } = require('./index');
+const { parseClearTimeRequest, parseNaturalChannelLayout, parseNaturalChannelPositionRequest, normaliseNaturalRequest } = require('./index');
 
 const now = new Date('2026-08-23T12:00:00.000Z');
 
@@ -51,4 +51,20 @@ test('parses relative channel positioning requests', () => {
         direction: 'below',
         referenceChannelName: 'lobby'
     });
+});
+
+test('normalises conversational request wrappers for every command family', () => {
+    const requests = [
+        ['Could you please create a channel called updates?', 'create a channel called updates'],
+        ["I'd like you to delete the memes channel, thanks", 'delete the memes channel'],
+        ['Would you mind moving general to Gaming?', 'move general to Gaming'],
+        ['Hey HallKeeper, please show me all the channels.', 'show me all the channels'],
+        ['Do me a favor and build a category called Events', 'create a category called Events'],
+        ['Please help me unassign the Guest role from Alex', 'remove the Guest role from Alex']
+    ];
+    for (const [input, expected] of requests) assert.equal(normaliseNaturalRequest(input), expected);
+});
+
+test('normalises question-style channel listing requests', () => {
+    assert.equal(normaliseNaturalRequest('Could you tell me which channels are on the server?'), 'tell me which channels are on the server');
 });

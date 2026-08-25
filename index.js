@@ -535,7 +535,7 @@ async function clearAllMessages(channel) {
 }
 
 function naturalHelpRequested(content) {
-    const helpRequest = content.trim().toLowerCase();
+    const helpRequest = normaliseNaturalRequest(content).toLowerCase();
     return [
         'help',
         'help me',
@@ -550,7 +550,11 @@ function naturalHelpRequested(content) {
         'what are your commands',
         'what are the commands',
         'how do i use you',
-        'how do i use hallkeeper'
+        'how do i use hallkeeper',
+        'what can i ask you to do',
+        'what kind of things can you do',
+        'how can you help',
+        'what are you able to do'
     ].includes(helpRequest);
 }
 
@@ -581,14 +585,36 @@ async function ensureChannelPermission(message, channel, permission, label) {
 }
 
 function normaliseNaturalRequest(content) {
-    return content
+    let text = String(content || '')
         .trim()
         .replace(/^\d+[.)]\s*/, '')
-        .replace(/^(?:can|could|would|will)\s+you\s+(?:please\s+)?/i, '')
-        .replace(/^please\s+/i, '')
         .replace(/^(?:hey|hi|hello)\s+(?:hall\s*keeper|hallkeeper)[,!:\s]*/i, '')
         .replace(/^(?:hall\s*keeper|hallkeeper)[,!:\s]*/i, '')
-        .trim();
+        .replace(/^would\s+you\s+mind\s+(?:please\s+)?/i, '')
+        .replace(/^please\s+(?=(?:can|could|would|will)\s+you\b)/i, '')
+        .replace(/^(?:can|could|would|will)\s+you\s+(?:please\s+)?/i, '')
+        .replace(/^(?:i(?:'d| would)\s+like\s+you\s+to|i\s+need\s+you\s+to|i\s+want\s+you\s+to)\s+/i, '')
+        .replace(/^(?:i(?:'d| would)\s+like\s+to|please\s+help\s+me(?:\s+to)?|help\s+me(?:\s+to)?|do\s+me\s+a\s+favor\s+and)\s+/i, '')
+        .replace(/^(?:i(?:'d| would)\s+like|i\s+need|i\s+want)\s+(?=(?:a|an|the|some)\s+(?:new\s+)?(?:channel|category|role)\b)/i, 'create ')
+        .replace(/^please\s+/i, '')
+        .replace(/\s+(?:please|thanks|thank\s+you)[.!?]*$/i, '')
+        .replace(/[.!?,]+$/g, '')
+        .trim()
+        .replace(/^(?:creating|making|adding|building)\b/i, 'create')
+        .replace(/^(?:deleting|erasing|destroying)\b/i, 'delete')
+        .replace(/^(?:moving|putting|relocating)\b/i, 'move')
+        .replace(/^(?:showing|listing|displaying)\b/i, 'show')
+        .replace(/^(?:giving|assigning|granting)\b/i, 'give')
+        .replace(/^(?:sending|posting|saying)\b/i, 'send')
+        .replace(/^(?:checking|viewing)\b/i, 'check')
+        .replace(/^muting\b/i, 'mute')
+        .replace(/^unmuting\b/i, 'unmute')
+        .replace(/^(?:build|construct|establish)\b/i, 'create')
+        .replace(/^(?:destroy|erase|obliterate)\b/i, 'delete')
+        .replace(/^relocate\b/i, 'move')
+        .replace(/^(?:grant|assign)\b/i, 'give')
+        .replace(/^unassign\b/i, 'remove');
+    return text;
 }
 
 function expandNaturalVoiceNames(countToken, rawName, userLimitByNumber = false) {
@@ -788,9 +814,15 @@ function parseNaturalChannelPositionRequest(content) {
 
 function parseNaturalVoiceLimitRequest(content) {
     const text = normaliseNaturalRequest(content);
-    const match = text.match(/^(?:can\s+you\s+)?(?:please\s+)?(?:set|update|change)\s+(?:the\s+)?user\s+limit\s+(?:for|on|of)\s+#?(.+?)\s+(?:to|at)\s+(\d+)\s*(?:users?|people|members?)?(?:\s+please)?[.!]?$/i);
+    const match = text.match(/^(?:set|update|change)\s+(?:the\s+)?user\s+limit\s+(?:for|on|of)\s+#?(.+?)\s+(?:to|at)\s+(\d+)\s*(?:users?|people|members?)?$/i)
+        || text.match(/^(?:set|update|change)\s+#?(.+?)\s+(?:user\s+)?limit\s+(?:to|at)\s+(\d+)\s*(?:users?|people|members?)?$/i)
+        || text.match(/^(?:allow|cap)\s+(\d+)\s*(?:users?|people|members?)\s+(?:in|on)\s+#?(.+)$/i);
     if (!match) return null;
-    return { channelName: match[1].trim(), userLimit: Math.min(Number.parseInt(match[2], 10), 99) };
+    const reversed = /^(?:allow|cap)\b/i.test(text);
+    return {
+        channelName: (reversed ? match[2] : match[1]).trim(),
+        userLimit: Math.min(Number.parseInt(reversed ? match[1] : match[2], 10), 99)
+    };
 }
 
 function parseNaturalCategoryVoiceLimitRequest(content) {
@@ -1302,18 +1334,22 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
         return true;
     }
 
-    if (/^(?:list|show|display)\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?(?:server\s+)?channels(?:\s+please)?$/i.test(text)) {
+    if (/^(?:list|show|display|tell\s+me)\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?(?:server\s+)?channels(?:\s+(?:on|in)\s+(?:the\s+)?server)?$/i.test(text)
+        || /^(?:which|what)\s+channels(?:\s+(?:are|do\s+we\s+have))?(?:\s+(?:on|in)\s+(?:the\s+)?server)?$/i.test(text)
+        || /^what\s+channels\s+do\s+you\s+have$/i.test(text)
+        || /^tell\s+me\s+(?:which|what)\s+channels\b.*$/i.test(text)
+        || /^what\s+channels\s+are\s+there$/i.test(text)) {
         await sendChannelList(message);
         return true;
     }
 
-    match = text.match(/^(?:kick|remove)\s+(.+?)(?:\s+from\s+(?:the\s+)?server)?(?:\s+please)?$/i);
+    match = text.match(/^(?:kick|remove|eject)\s+(.+?)(?:\s+from\s+(?:the\s+)?server)?$/i);
     if (match) return await naturalKick(message, match[1].trim());
 
-    match = text.match(/^(?:ban|block)\s+(.+?)(?:\s+from\s+(?:the\s+)?server)?(?:\s+please)?$/i);
+    match = text.match(/^(?:ban|block|blacklist)\s+(.+?)(?:\s+from\s+(?:the\s+)?server)?$/i);
     if (match) return await naturalBan(message, match[1].trim());
 
-    match = text.match(/^(?:mute|timeout|silence)\s+(.+?)\s+(?:for\s+)?(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)(?:\s+please)?$/i);
+    match = text.match(/^(?:mute|timeout|silence)\s+(.+?)\s+(?:for\s+)?(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)$/i);
     if (match) {
         const unitText = match[3].toLowerCase();
         const unit = unitText.startsWith('second') || unitText === 'sec' || unitText === 's'
@@ -1325,18 +1361,18 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
         return await naturalMute(message, match[1].trim(), `${match[2]}${unit}`);
     }
 
-    match = text.match(/^(?:unmute|untimeout|unsilence)\s+(.+?)(?:\s+please)?$/i);
+    match = text.match(/^(?:unmute|untimeout|unsilence|remove\s+(?:the\s+)?timeout\s+from)\s+(.+)$/i);
     if (match) {
         return await naturalUnmute(message, match[1].trim());
     }
 
-    match = text.match(/^(?:warn|give\s+(?:a\s+)?warning\s+to)\s+(.+?)\s+(?:for|because)\s+(.+?)(?:\s+please)?$/i);
+    match = text.match(/^(?:warn|give\s+(?:a\s+)?warning\s+to|issue\s+(?:a\s+)?warning\s+to)\s+(.+?)\s+(?:for|because|due\s+to)\s+(.+)$/i);
     if (match) return await naturalWarn(message, match[1].trim(), match[2].trim());
 
-    match = text.match(/^(?:show|list|view)\s+(?:the\s+)?warnings?\s+(?:for|of)\s+(.+?)(?:\s+please)?$/i);
+    match = text.match(/^(?:show|list|view|tell\s+me)\s+(?:me\s+)?(?:the\s+)?warnings?\s+(?:for|of|about)\s+(.+)$/i);
     if (match) return await showWarnings(message, match[1].trim());
 
-    match = text.match(/^(?:clear|remove|delete)\s+(?:all\s+)?warnings?\s+(?:for|from)\s+(.+?)(?:\s+please)?$/i);
+    match = text.match(/^(?:clear|remove|delete|wipe)\s+(?:all\s+)?warnings?\s+(?:for|from|about)\s+(.+)$/i);
     if (match) return await requestWarningClear(message, match[1].trim());
 
     match = text.match(/^(?:clear|delete|remove|purge)\s+(?:the\s+)?(?:last\s+)?(\d+)\s+messages?(?:\s+please)?$/i);
@@ -1380,6 +1416,10 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
     if (match) return await naturalSendMessage(message, match[1].trim(), match[2].trim(), match[3].trim());
 
     match = text.match(/^(?:send|post|say)\s+(?:a\s+)?message\s+(?:to|in)\s+#?(.+?)\s+(?:saying|that\s+says)?\s*(.+)$/i);
+    if (match) return await naturalSendMessageToChannel(message, match[1].trim(), match[2].trim());
+
+    match = text.match(/^(?:tell|message)\s+#?(.+?)\s*(?::|to say|saying|that says)\s*(.+)$/i)
+        || text.match(/^(?:tell|message)\s+#?(.+?)\s+(.+)$/i);
     if (match) return await naturalSendMessageToChannel(message, match[1].trim(), match[2].trim());
 
     match = text.match(/^(?:check|show|view)\s+(?:the\s+)?(?:channel\s+)?permissions\s+(?:for|of|on)\s+#?(.+?)(?:\s+please)?$/i);
@@ -2170,6 +2210,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    normaliseNaturalRequest,
     getZonedDateParts,
     parseClearTimeRequest,
     parseClockTime,
