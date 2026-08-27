@@ -51,8 +51,7 @@ const NEWS_SOURCES = [
     { key: 'valorant', category: 'Valorant', label: 'VALORANT', type: 'valorant' },
     { key: 'destiny', category: 'Destiny', label: 'Destiny 2', type: 'steam', appId: 1085660 },
     { key: 'apex-legends', category: 'Apex Legends', label: 'Apex Legends', type: 'steam', appId: 1172470 },
-    { key: 'battlefield', category: 'Battlefield', label: 'Battlefield', type: 'steam', appId: 2807960 },
-    { key: 'openai', category: 'OpenAI', label: 'OpenAI', type: 'rss', url: 'https://openai.com/news/rss.xml' }
+    { key: 'battlefield', category: 'Battlefield', label: 'Battlefield', type: 'steam', appId: 2807960 }
 ];
 
 // Named permission templates. Add future templates here without changing the
