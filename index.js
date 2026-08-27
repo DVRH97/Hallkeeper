@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const OpenAI = require('openai');
 const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 
@@ -51,7 +52,9 @@ const NEWS_SOURCES = [
     { key: 'valorant', category: 'Valorant', label: 'VALORANT', type: 'valorant' },
     { key: 'destiny', category: 'Destiny', label: 'Destiny 2', type: 'steam', appId: 1085660 },
     { key: 'apex-legends', category: 'Apex Legends', label: 'Apex Legends', type: 'steam', appId: 1172470 },
-    { key: 'battlefield', category: 'Battlefield', label: 'Battlefield', type: 'steam', appId: 2807960 }
+    { key: 'battlefield', category: 'Battlefield', label: 'Battlefield', type: 'steam', appId: 2807960 },
+    { key: 'openai-pricing', category: 'OpenAI', label: 'OpenAI API Pricing', type: 'openai-docs', docKind: 'pricing', url: 'https://developers.openai.com/api/docs/pricing' },
+    { key: 'openai-changelog', category: 'OpenAI', label: 'OpenAI API Changelog', type: 'openai-docs', docKind: 'changelog', url: 'https://developers.openai.com/api/docs/changelog' }
 ];
 
 // Named permission templates. Add future templates here without changing the
@@ -252,9 +255,62 @@ async function getValorantNews() {
         .sort((a, b) => b.publishedAt - a.publishedAt);
 }
 
+function markdownToText(value = '') {
+    return value
+        .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+        .replace(/[`*_>#]/g, '')
+        .replace(/\|/g, ' ')
+        .replace(/-{3,}/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function contentFingerprint(value) {
+    return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+async function getOpenAiDocsNews(source) {
+    const response = await fetch(`${source.url}.md`, { signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`OpenAI Docs returned ${response.status}`);
+    const markdown = await response.text();
+    const fingerprint = contentFingerprint(markdown);
+    const url = `${source.url}#${fingerprint.slice(0, 12)}`;
+
+    if (source.docKind === 'pricing') {
+        return [{
+            id: `${source.key}:${fingerprint}`,
+            title: `${source.label} updated`,
+            url,
+            description: markdownToText(markdown).slice(0, 4000),
+            publishedAt: new Date()
+        }];
+    }
+
+    const monthMatch = markdown.match(/^## ([^\r\n]+)$/m);
+    const section = monthMatch ? markdown.slice(monthMatch.index + monthMatch[0].length) : markdown;
+    const headings = [...section.matchAll(/^### ([^\r\n]+)$/gm)];
+    if (!headings.length) throw new Error('OpenAI changelog contains no dated entries');
+    const first = headings[0];
+    const entryStart = first.index + first[0].length;
+    const entryEnd = headings[1]?.index ?? section.length;
+    const entry = section.slice(entryStart, entryEnd).trim();
+    const entryFingerprint = contentFingerprint(`${first[1]}\n${entry}`);
+    const year = monthMatch?.[1].match(/\d{4}/)?.[0] || new Date().getUTCFullYear();
+
+    return [{
+        id: `${source.key}:${entryFingerprint}`,
+        title: `${source.label} — ${first[1]}`,
+        url: `${source.url}#${entryFingerprint.slice(0, 12)}`,
+        description: markdownToText(entry).slice(0, 4000),
+        publishedAt: new Date(`${first[1]} ${year}`)
+    }];
+}
+
 async function getNews(source) {
     if (source.type === 'steam') return getSteamNews(source);
     if (source.type === 'valorant') return getValorantNews(source);
+    if (source.type === 'openai-docs') return getOpenAiDocsNews(source);
     return getRssNews(source);
 }
 
