@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseClearTimeRequest, parseNaturalChannelLayout, parseNaturalChannelPositionRequest, normaliseNaturalRequest } = require('./index');
+const { parseClearTimeRequest, parseNaturalChannelLayout, parseNaturalChannelPositionRequest, parseNaturalTextChannelRequest, normaliseNaturalRequest } = require('./index');
 
 const now = new Date('2026-08-23T12:00:00.000Z');
 
@@ -51,6 +51,24 @@ test('parses relative channel positioning requests', () => {
         direction: 'below',
         referenceChannelName: 'lobby'
     });
+});
+
+test('parses text-channel requests using to and a trailing category label', () => {
+    assert.deepEqual(
+        parseNaturalTextChannelRequest('Add a News channel to the OpenAI category'),
+        { channelName: 'news', categoryName: 'OpenAI' }
+    );
+    assert.deepEqual(
+        parseNaturalTextChannelRequest('Add a news channel to OpenAI'),
+        { channelName: 'news', categoryName: 'OpenAI' }
+    );
+});
+
+test('parses a category request containing one text channel', () => {
+    assert.deepEqual(
+        parseNaturalChannelLayout('Create OpenAI Category with one News Text channel'),
+        { categoryName: 'OpenAI', textChannels: ['News'], voiceChannels: [] }
+    );
 });
 
 test('normalises conversational request wrappers for every command family', () => {

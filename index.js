@@ -705,6 +705,14 @@ function parseNaturalChannelLayout(content) {
     let remainder = categoryMatch[2].trim();
     const correspondingLimitRequested = /set\s+(?:the\s+)?user\s+limit\s+(?:per\s+channel\s+)?to\s+the\s+corresponding\s+number/i.test(remainder);
     remainder = remainder.replace(/\s*(?:[.!]?\s+and\s+)?set\s+(?:the\s+)?user\s+limit\s+(?:per\s+channel\s+)?to\s+the\s+corresponding\s+number[.!]?\s*$/i, '').trim();
+    const textOnlyMatch = remainder.match(/^(?:one|a|an)\s+(.+?)\s+text\s+channels?$/i);
+    if (textOnlyMatch) {
+        return {
+            categoryName,
+            textChannels: [textOnlyMatch[1].trim()],
+            voiceChannels: []
+        };
+    }
     remainder = remainder.replace(/VC\s+(\d+)\s+(?:through|to)\s+VC\s+(\d+)\s+(.+?)\s+voice\s+channels?$/i, (_, first, last, label) => {
         return `${last - first + 1} voice channels named VC ${first}-${last} ${label}`;
     });
@@ -811,6 +819,17 @@ function parseNaturalChannelPositionRequest(content) {
         channelName: match[1].trim(),
         direction: /above|before/i.test(match[2]) ? 'above' : 'below',
         referenceChannelName: match[3].trim()
+    };
+}
+
+function parseNaturalTextChannelRequest(content) {
+    const text = normaliseNaturalRequest(content);
+    const match = text.match(/^(?:create|make|add|set\s+up)\s+(?:a\s+)?(?:new\s+)?(?:text\s+)?channel\s+(?:called|named)?\s*(.+?)\s+(?:in|under|inside|to)\s+(?:the\s+)?(?:category\s+)?(.+?)(?:\s+category)?(?:\s+please)?$/i)
+        || text.match(/^(?:create|make|add|set\s+up)\s+(?:a\s+)?(?:new\s+)?(.+?)\s+(?:text\s+)?channel\s+(?:in|under|inside|to)\s+(?:the\s+)?(?:category\s+)?(.+?)(?:\s+category)?(?:\s+please)?$/i);
+    if (!match) return null;
+    return {
+        channelName: match[1].trim().toLowerCase().replace(/\s+/g, '-'),
+        categoryName: match[2].trim()
     };
 }
 
@@ -1278,19 +1297,17 @@ async function executeNatural(message, authorisedStaff, translationDepth = 0) {
         return true;
     }
 
-    match = text.match(/^(?:create|make|add|set\s+up)\s+(?:a\s+)?(?:new\s+)?(?:text\s+)?channel\s+(?:called|named)?\s*(.+?)\s+(?:in|under|inside)\s+(?:the\s+)?(?:category\s+)?(.+?)(?:\s+please)?$/i);
-    if (match) {
+    const channelRequest = parseNaturalTextChannelRequest(message.content);
+    if (channelRequest) {
         if (!await ensureGuildPermission(message, 'ManageChannels', 'Manage Channels')) return true;
-        const channelName = match[1].trim().toLowerCase().replace(/\s+/g, '-');
-        const categoryName = match[2].trim();
-        const category = findCategory(message.guild, categoryName);
+        const category = findCategory(message.guild, channelRequest.categoryName);
         if (!category) {
-            await message.reply(`❌ I couldn't find a category called **${categoryName}**.`);
+            await message.reply(`❌ I couldn't find a category called **${channelRequest.categoryName}**.`);
             return true;
         }
         try {
             const channel = await message.guild.channels.create({
-                name: channelName,
+                name: channelRequest.channelName,
                 type: ChannelType.GuildText,
                 parent: category.id
             });
@@ -2218,5 +2235,6 @@ module.exports = {
     parseClockTime,
     zonedDateTimeToDate,
     parseNaturalChannelLayout,
-    parseNaturalChannelPositionRequest
+    parseNaturalChannelPositionRequest,
+    parseNaturalTextChannelRequest
 };
