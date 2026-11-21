@@ -38,6 +38,16 @@ const CLEAR_TIMEZONE = process.env.CLEAR_TIMEZONE || 'UTC';
 const aiRequestTimes = new Map();
 const aiConversations = new Map();
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+const AI_NEWS_DIGEST_ENABLED = process.env.AI_NEWS_DIGEST_ENABLED !== 'false';
+const AI_NEWS_DIGEST_CATEGORY = process.env.AI_NEWS_DIGEST_CATEGORY || 'News Digest';
+const AI_NEWS_DIGEST_CHANNEL = process.env.AI_NEWS_DIGEST_CHANNEL || 'news-digest';
+const AI_NEWS_DIGEST_MAX_OUTPUT_TOKENS = boundedInteger(
+    process.env.AI_NEWS_DIGEST_MAX_OUTPUT_TOKENS,
+    350,
+    100,
+    1000
+);
+const AI_NEWS_DIGEST_AUTO_CREATE = process.env.AI_NEWS_DIGEST_AUTO_CREATE !== 'false';
 const NEWS_POLL_INTERVAL_MS = Math.max(
     Number.parseInt(process.env.NEWS_POLL_INTERVAL_MINUTES || '1', 10) * 60 * 1000,
     60 * 1000
@@ -345,6 +355,75 @@ async function deliverNews(channel, source, item) {
     return true;
 }
 
+async function getNewsDigestChannel(guild) {
+    const category = findCategory(guild, AI_NEWS_DIGEST_CATEGORY);
+    const existing = findTextChannel(guild, AI_NEWS_DIGEST_CHANNEL, AI_NEWS_DIGEST_CATEGORY);
+    if (existing) return existing;
+    if (!AI_NEWS_DIGEST_AUTO_CREATE) return null;
+
+    const bot = guild.members.me;
+    if (!bot?.permissions.has('ManageChannels')) {
+        console.warn(`News digest channel is missing in ${guild.name}; HallKeeper lacks Manage Channels.`);
+        return null;
+    }
+
+    try {
+        const digestCategory = category || await guild.channels.create({
+            name: AI_NEWS_DIGEST_CATEGORY,
+            type: ChannelType.GuildCategory,
+            reason: 'Create the AI news digest category'
+        });
+        return await guild.channels.create({
+            name: AI_NEWS_DIGEST_CHANNEL,
+            type: ChannelType.GuildText,
+            parent: digestCategory.id,
+            reason: 'Create the AI news digest channel'
+        });
+    } catch (error) {
+        console.error(`Could not create the news digest channel in ${guild.name}:`, error);
+        return null;
+    }
+}
+
+async function createNewsDigestSummary(source, item) {
+    if (!AI_NEWS_DIGEST_ENABLED || !openai) return null;
+
+    const response = await openai.responses.create({
+        model: AI_MODEL,
+        store: false,
+        max_output_tokens: AI_NEWS_DIGEST_MAX_OUTPUT_TOKENS,
+        instructions: [
+            'You write concise Discord news digests.',
+            'Summarize only the supplied announcement; do not invent details or speculate.',
+            'Use 2-4 short bullet points followed by one sentence explaining why it matters.',
+            'Do not include a title, links, or markdown heading.'
+        ].join(' '),
+        input: [
+            `Source: ${source.label}`,
+            `Title: ${item.title}`,
+            `Announcement text: ${item.description || 'No announcement text was provided.'}`
+        ].join('\n\n')
+    });
+    return response.output_text?.trim() || null;
+}
+
+async function deliverNewsDigest(guild, source, item, summary) {
+    if (!summary) return false;
+    const channel = await getNewsDigestChannel(guild);
+    if (!channel) return false;
+
+    const embed = new EmbedBuilder()
+        .setColor(0x57F287)
+        .setAuthor({ name: `${source.label} — AI News Digest` })
+        .setTitle(item.title.slice(0, 256))
+        .setURL(item.url)
+        .setDescription(summary.slice(0, 4000))
+        .setFooter({ text: 'AI-generated summary • Open the original announcement for full details' });
+    if (!Number.isNaN(item.publishedAt.getTime())) embed.setTimestamp(item.publishedAt);
+    await channel.send({ embeds: [embed] });
+    return true;
+}
+
 async function pollNews({ initialise = false } = {}) {
     if (newsPollInProgress) return;
     newsPollInProgress = true;
@@ -381,7 +460,24 @@ async function pollNews({ initialise = false } = {}) {
                 }
 
                 const newItems = items.filter(item => item.id && !delivered.has(item.id)).reverse();
-                for (const item of newItems) await deliverNews(channel, source, item);
+                for (const item of newItems) {
+                    await deliverNews(channel, source, item);
+                    if (AI_NEWS_DIGEST_ENABLED && openai) {
+                        const digestKey = `${guild.id}:ai-digest:${item.id}`;
+                        const digestDelivered = new Set(newsState.aiDigest || []);
+                        if (!digestDelivered.has(digestKey)) {
+                            try {
+                                const summary = await createNewsDigestSummary(source, item);
+                                if (await deliverNewsDigest(guild, source, item, summary)) {
+                                    digestDelivered.add(digestKey);
+                                    newsState.aiDigest = [...digestDelivered].slice(-500);
+                                }
+                            } catch (error) {
+                                console.error(`AI news digest failed for ${guild.name} / ${source.category}:`, error);
+                            }
+                        }
+                    }
+                }
                 newsState[stateKey] = [...newItems.map(item => item.id), ...delivered].slice(0, 100);
                 saveNewsState();
             } catch (error) {
@@ -2233,6 +2329,12 @@ async function handleCommand(message, authorisedStaff) {
 
 discord.once('clientReady', async () => {
     console.log(`Logged in as ${discord.user.tag}`);
+    if (AI_NEWS_DIGEST_ENABLED) {
+        for (const guild of discord.guilds.cache.values()) {
+            await guild.channels.fetch();
+            await getNewsDigestChannel(guild);
+        }
+    }
     await pollNews({ initialise: true });
     setInterval(() => {
         pollNews().catch(error => console.error('News polling error:', error));
