@@ -424,6 +424,20 @@ async function deliverNewsDigest(guild, source, item, summary) {
     return true;
 }
 
+async function deliverChannelNewsSummary(channel, source, item, summary) {
+    if (!summary) return false;
+    const embed = new EmbedBuilder()
+        .setColor(0x57F287)
+        .setAuthor({ name: `${source.label} — AI Summary` })
+        .setTitle(item.title.slice(0, 256))
+        .setURL(item.url)
+        .setDescription(summary.slice(0, 4000))
+        .setFooter({ text: 'AI-generated summary • Open the original announcement for full details' });
+    if (!Number.isNaN(item.publishedAt.getTime())) embed.setTimestamp(item.publishedAt);
+    await channel.send({ embeds: [embed] });
+    return true;
+}
+
 async function pollNews({ initialise = false } = {}) {
     if (newsPollInProgress) return;
     newsPollInProgress = true;
@@ -464,11 +478,19 @@ async function pollNews({ initialise = false } = {}) {
                     await deliverNews(channel, source, item);
                     if (AI_NEWS_DIGEST_ENABLED && openai) {
                         const digestKey = `${guild.id}:ai-digest:${item.id}`;
+                        const channelSummaryKey = `${guild.id}:ai-channel-summary:${item.id}`;
                         const digestDelivered = new Set(newsState.aiDigest || []);
-                        if (!digestDelivered.has(digestKey)) {
+                        const channelSummariesDelivered = new Set(newsState.aiChannelSummaries || []);
+                        if (!digestDelivered.has(digestKey) || !channelSummariesDelivered.has(channelSummaryKey)) {
                             try {
                                 const summary = await createNewsDigestSummary(source, item);
-                                if (await deliverNewsDigest(guild, source, item, summary)) {
+                                if (!channelSummariesDelivered.has(channelSummaryKey) &&
+                                    await deliverChannelNewsSummary(channel, source, item, summary)) {
+                                    channelSummariesDelivered.add(channelSummaryKey);
+                                    newsState.aiChannelSummaries = [...channelSummariesDelivered].slice(-500);
+                                }
+                                if (!digestDelivered.has(digestKey) &&
+                                    await deliverNewsDigest(guild, source, item, summary)) {
                                     digestDelivered.add(digestKey);
                                     newsState.aiDigest = [...digestDelivered].slice(-500);
                                 }
