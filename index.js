@@ -51,6 +51,7 @@ const NEWS_SOURCES = [
     { key: 'pokemmo', category: 'POKEMMO', label: 'PokeMMO', type: 'rss', url: 'https://forums.pokemmo.com/index.php?/rss/1-updates-announcements.xml/' },
     { key: 'valorant', category: 'Valorant', label: 'VALORANT', type: 'valorant' },
     { key: 'destiny', category: 'Destiny', label: 'Destiny 2', type: 'steam', appId: 1085660 },
+    { key: 'oracle-oci-release-notes', category: 'Oracle Cloud', label: 'Oracle Cloud OCI Release Notes', type: 'rss', url: 'https://docs.oracle.com/en-us/iaas/releasenotes/feed/' },
     { key: 'apex-legends', category: 'Apex Legends', label: 'Apex Legends', type: 'steam', appId: 1172470 },
     { key: 'battlefield', category: 'Battlefield', label: 'Battlefield', type: 'steam', appId: 2807960 },
     { key: 'openai-pricing', category: 'OpenAI', label: 'OpenAI API Pricing', type: 'openai-docs', docKind: 'pricing', url: 'https://developers.openai.com/api/docs/pricing' },
