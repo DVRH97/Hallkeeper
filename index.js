@@ -27,7 +27,7 @@ function boundedInteger(value, fallback, minimum, maximum) {
 
 const NEWS_STATE_PATH = path.join(__dirname, 'news-state.json');
 const WARNINGS_STATE_PATH = path.join(__dirname, 'warnings-state.json');
-const AI_MODEL = process.env.AI_MODEL || 'gpt-5.6-luna';
+const AI_MODEL = process.env.AI_MODEL || 'gpt-6-luna';
 const AI_MAX_OUTPUT_TOKENS = boundedInteger(process.env.AI_MAX_OUTPUT_TOKENS, 500, 100, 2000);
 const AI_RATE_LIMIT_MAX = boundedInteger(process.env.AI_RATE_LIMIT_MAX, 5, 1, 20);
 const AI_RATE_LIMIT_WINDOW_MS = boundedInteger(process.env.AI_RATE_LIMIT_WINDOW_MINUTES, 10, 1, 60) * 60 * 1000;
